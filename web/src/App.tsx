@@ -497,12 +497,13 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <PluginSlot name="header-left" />
 
-                <Typography
-                  className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem] text-midground"
-                  style={{ mixBlendMode: "plus-lighter" }}
-                >
-                  Sopify
-                </Typography>
+                <img
+                  src="/sopify-logo.png"
+                  alt="Sopify"
+                  className="block h-7 w-auto select-none"
+                  style={{ imageRendering: "auto" }}
+                  draggable={false}
+                />
               </div>
 
               <Button
