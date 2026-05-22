@@ -1,0 +1,104 @@
+name: sopify
+# REQ-0.4 — lint + type-check + unit tests gate every Sopify PR.
+# Runs only against Sopify-owned files; Hermes upstream is read-only.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/sopify_*/**"
+      - "sopify"
+      - "sopify-runtime.py"
+      - "sopify_skill_bundles/**"
+      - "scripts/sopify-install.sh"
+      - "docker/sopify-sandbox/**"
+      - "docs/sopify/**"
+      - ".github/workflows/sopify.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "plugins/sopify_*/**"
+      - "sopify"
+      - "sopify-runtime.py"
+      - "sopify_skill_bundles/**"
+      - "scripts/sopify-install.sh"
+      - "docker/sopify-sandbox/**"
+      - "docs/sopify/**"
+      - ".github/workflows/sopify.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ruff + mypy (Sopify-owned only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: ruff (sopify only)
+        run: |
+          uv run --with ruff python -m ruff check \
+            plugins/sopify_*/ sopify-runtime.py \
+            --select=E,F,W,I --ignore=E501,E402
+      - name: mypy (sopify only, lenient)
+        run: |
+          uv run --with mypy python -m mypy --ignore-missing-imports \
+            plugins/sopify_core plugins/sopify_providers \
+            plugins/sopify_guardrails plugins/sopify_otel \
+            plugins/sopify_skills plugins/sopify_modes \
+            plugins/sopify_management plugins/sopify_sandbox \
+            plugins/sopify_tui
+
+  test:
+    name: pytest (50 plugin tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+      - name: pytest
+        env:
+          SOPIFY_HOME: /tmp/sopify-ci
+          SOPIFY_NO_BANNER: "1"
+        run: |
+          uv run --with pytest --with pytest-xdist --with pytest-timeout \
+            python -m pytest plugins/sopify_*/tests \
+            -n0 -o addopts= --tb=short -q
+
+  shellcheck:
+    name: shellcheck (install scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: |
+          shellcheck scripts/sopify-install.sh
+          shellcheck docker/sopify-sandbox/entrypoint.sh
+
+  yaml-lint:
+    name: yamllint (plugin manifests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - run: |
+          yamllint -d "{extends: relaxed, rules: {line-length: {max: 200}}}" \
+            plugins/sopify_*/plugin.yaml
+
+  docker-build:
+    name: docker build sopify-sandbox (smoke)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'  # only on push to main, not every PR
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sandbox image
+        run: |
+          docker build -t sopify-sandbox:ci docker/sopify-sandbox
+      - name: Smoke-test image
+        run: |
+          docker run --rm sopify-sandbox:ci /bin/bash -c "echo ok"

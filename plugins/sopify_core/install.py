@@ -151,8 +151,21 @@ def run() -> InstallReport:
         return report
     _ensure_network(report)
     _write_default_policy(report)
+    _activate_plugins(report)
     _emit_install_event(report)
     return report
+
+
+def _activate_plugins(report: InstallReport) -> None:
+    """REQ-0.7 — enable every sopify_* plugin in Hermes' config so
+    guardrails/OTel/modes actually wire into the runtime when the
+    dashboard/chat starts."""
+    try:
+        from . import activate
+        enabled = activate.ensure_enabled()
+        report.steps.append(f"plugins.enabled: {len(enabled)} entries")
+    except Exception as exc:
+        report.steps.append(f"plugins.enabled: skipped ({exc})")
 
 
 def format_report(report: InstallReport) -> str:

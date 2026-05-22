@@ -1,0 +1,38 @@
+# Sopify /living mode — systemd unit (REQ-3.1.2 Linux path).
+#
+# Install (per-user):
+#   mkdir -p ~/.config/systemd/user
+#   cp sopify-living.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now sopify-living
+#
+# Status:    systemctl --user status sopify-living
+# Logs:      journalctl --user -u sopify-living -f
+# Restart:   systemctl --user restart sopify-living
+# Disable:   systemctl --user disable --now sopify-living
+
+[Unit]
+Description=Sopify /living — 24/7 AI employee
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/sopify /living
+ExecStop=/bin/sh -c 'kill -TERM $(cat %h/.sopify/sessions/living.pid 2>/dev/null) 2>/dev/null || true'
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+Environment=SOPIFY_NO_BANNER=1
+
+# Resource cap so a runaway /living can't OOM the box (REQ-12 < 512MB).
+MemoryHigh=512M
+MemoryMax=768M
+
+# REQ-11.4 — already enforced inside the sandbox; keep the unit non-root too.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

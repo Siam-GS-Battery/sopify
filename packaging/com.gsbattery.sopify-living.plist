@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS launchd agent for Sopify /living (REQ-3.1.2 macOS path).
+
+  Install:
+    cp packaging/com.gsbattery.sopify-living.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gsbattery.sopify-living.plist
+    launchctl kickstart gui/$(id -u)/com.gsbattery.sopify-living
+
+  Status:    launchctl print gui/$(id -u)/com.gsbattery.sopify-living
+  Stop:      launchctl bootout  gui/$(id -u)/com.gsbattery.sopify-living
+  Logs:      tail -f ~/Library/Logs/sopify-living.log
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.gsbattery.sopify-living</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>$HOME/.local/bin/sopify /living</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/Library/Logs/sopify-living.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/Library/Logs/sopify-living.error.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SOPIFY_NO_BANNER</key>
+        <string>1</string>
+    </dict>
+</dict>
+</plist>

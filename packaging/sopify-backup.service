@@ -1,0 +1,12 @@
+# Sopify daily backup service (REQ-3.1.4).
+# Triggered by sopify-backup.timer.
+
+[Unit]
+Description=Sopify daily session backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env python3 %h/.sopify-app/cron/daily-backup.py
+Environment=SOPIFY_LOG_LEVEL=INFO
+NoNewPrivileges=true
+PrivateTmp=true

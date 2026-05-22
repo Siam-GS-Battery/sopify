@@ -21,4 +21,9 @@ ln -sf /sopify-config/settings.json "$SOPIFY_HOME/settings.json" || true
 ln -sf /sopify-sessions          "$SOPIFY_HOME/sessions"    || true
 
 cd /workspace
-exec python3 /opt/sopify/sopify-runtime.py "$@"
+# Prefer the in-venv python (uv sync at build time installs Hermes there).
+PYTHON="/opt/sopify/.venv/bin/python"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="$(command -v python3)"
+fi
+exec "$PYTHON" /opt/sopify/sopify-runtime.py "$@"
