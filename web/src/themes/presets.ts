@@ -57,25 +57,29 @@ const SOPIFY_LAYOUT: ThemeLayout = {
 /**
  * Sopify (Light) — the canonical Sopify look.
  *
- * Palette ports the Rhino AI Agent design tokens (CSS_STYLE.md):
- *   --primary  #1D63ED   (blue CTA)
- *   --accent   #0DB7ED   (light blue / output series)
- *   --bg       #F8FAFC   (viewport background)
- *   --surface  #FFFFFF   (card / sidebar)
+ * Nous DS token semantics (verified from default Hermes theme + rose):
+ *   - background  = the page / deepest pane bg
+ *   - midground   = primary TEXT color (must contrast background)
+ *   - foreground  = overlay / glow layer (usually transparent)
  *
- * Light mode only — the Nous DS layer maps these onto `background`,
- * `midground`, `foreground`. `background` is the deepest pane, so we
- * use the surface white; `midground` becomes the page bg.
+ * Palette ports CSS_STYLE.md tokens onto those slots:
+ *   page bg     #F8FAFC  -> background
+ *   text dark   #03061E  -> midground   (Rhino's --text-primary)
+ *   overlay     transparent
+ *
+ * The Sopify CSS variables in `index.css` provide the rest (--primary,
+ * --surface, --border, etc.) for components that read them directly
+ * (Recharts, Clerk, inline styles, custom panels).
  */
 export const sopifyTheme: DashboardTheme = {
   name: "sopify",
   label: "Sopify",
   description: "Clean light dashboard — blue primary, Roboto, Rhino-style tokens",
   palette: {
-    background: { hex: "#FFFFFF", alpha: 1 },
-    midground: { hex: "#F8FAFC", alpha: 1 },
-    foreground: { hex: "#03061E", alpha: 1 },
-    warmGlow: "rgba(29, 99, 237, 0.18)", // primary-tinted glow
+    background: { hex: "#F8FAFC", alpha: 1 },  // page bg
+    midground:  { hex: "#03061E", alpha: 1 },  // text + emphasis (CONTRAST)
+    foreground: { hex: "#FFFFFF", alpha: 0 },  // transparent overlay
+    warmGlow: "rgba(29, 99, 237, 0.18)",       // primary-tinted glow
     noiseOpacity: 0,
   },
   typography: SOPIFY_TYPOGRAPHY,

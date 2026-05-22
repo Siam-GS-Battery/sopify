@@ -380,3 +380,34 @@ kbd {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+/* ====================================================================== */
+/* Sopify theme — light-mode overrides                                    */
+/* When the active theme is `sopify`, suppress the default filler         */
+/* painting and ensure light/dark contrasts read correctly.               */
+/* ====================================================================== */
+
+:root[data-theme-name="sopify"] .theme-default-filler {
+  display: none !important;
+}
+
+/* Some Hermes components use `text-midground` for text, which we already
+   map to dark navy via the palette. But the page background is a paler
+   #F8FAFC; explicitly set the body bg so the filler removal doesn't
+   reveal anything weird underneath. */
+:root[data-theme-name="sopify"] body {
+  background: #F8FAFC;
+}
+
+/* Sidebar + cards on Sopify get white surface bg (CSS_STYLE.md --surface) */
+:root[data-theme-name="sopify"] aside,
+:root[data-theme-name="sopify"] [data-slot="sidebar"],
+:root[data-theme-name="sopify"] [data-slot="card"] {
+  background: #FFFFFF;
+  border-color: #E5E7EB;
+}
+
+/* Make sure inherited text isn't drowned by midground glow filters */
+:root[data-theme-name="sopify"] .text-midground {
+  color: #03061E !important;
+}

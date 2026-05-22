@@ -268,6 +268,13 @@ function applyLayoutVariant(variant: ThemeLayoutVariant | undefined) {
   root.style.setProperty("--theme-layout-variant", final);
 }
 
+function applyThemeNameAttribute(name: string) {
+  if (typeof document === "undefined") return;
+  // Used by index.css to suppress the default-filler painting on light
+  // themes that would otherwise bleed through the page background.
+  document.documentElement.dataset.themeName = name;
+}
+
 // ---------------------------------------------------------------------------
 // Font stylesheet injection
 // ---------------------------------------------------------------------------
@@ -332,6 +339,7 @@ function applyTheme(theme: DashboardTheme) {
   injectFontStylesheet(theme.typography.fontUrl);
   applyCustomCSS(theme.customCSS);
   applyLayoutVariant(theme.layoutVariant);
+  applyThemeNameAttribute(theme.name);
 }
 
 // ---------------------------------------------------------------------------
