@@ -504,11 +504,16 @@ export default function App() {
                   style={{ imageRendering: "auto" }}
                   draggable={false}
                 />
+                <div
+                  aria-hidden="true"
+                  className="self-stretch w-px"
+                  style={{ background: "#1D63ED", opacity: 0.4 }}
+                />
                 <Typography
-                  className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem] text-midground"
-                  style={{ mixBlendMode: "plus-lighter" }}
+                  className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem]"
+                  style={{ color: "#1D63ED" }}
                 >
-                  Sopify
+                  SOPIFY
                 </Typography>
               </div>
 
