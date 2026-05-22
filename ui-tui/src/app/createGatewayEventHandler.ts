@@ -25,10 +25,31 @@ const NO_PROVIDER_RE = /\bNo (?:LLM|inference) provider configured\b/i
 
 const statusFromBusy = () => (getUiState().busy ? 'running…' : 'ready')
 
-const applySkin = (s: GatewaySkin) =>
+const applySkin = (s: GatewaySkin) => {
+  // Sopify: ignore server-pushed colors entirely. Hermes' default skin
+  // (Hermes Teal) would clobber our SOPIFY_LIGHT_THEME palette here with
+  // gold/amber values. We keep server-supplied branding/banner_logo so
+  // optional customisation still flows, but force the color palette from
+  // DEFAULT_THEME (SOPIFY_LIGHT) unconditionally.
+  // Opt back into upstream behaviour with SOPIFY_TUI_THEME=hermes-gold.
+  const useUpstreamSkin = process.env.SOPIFY_TUI_THEME === 'hermes-gold'
+  if (useUpstreamSkin) {
+    patchUiState({
+      theme: fromSkin(
+        s.colors ?? {},
+        s.branding ?? {},
+        s.banner_logo ?? '',
+        s.banner_hero ?? '',
+        s.tool_prefix ?? '',
+        s.help_header ?? ''
+      )
+    })
+    return
+  }
+  // Sopify path: only let branding/banner texts through, never colors.
   patchUiState({
     theme: fromSkin(
-      s.colors ?? {},
+      {}, // colors blocked — SOPIFY_LIGHT wins
       s.branding ?? {},
       s.banner_logo ?? '',
       s.banner_hero ?? '',
@@ -36,6 +57,7 @@ const applySkin = (s: GatewaySkin) =>
       s.help_header ?? ''
     )
   })
+}
 
 const dropBgTask = (taskId: string) =>
   patchUiState(state => {
