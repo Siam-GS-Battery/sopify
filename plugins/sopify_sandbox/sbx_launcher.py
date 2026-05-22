@@ -50,15 +50,37 @@ def _kit_path() -> Path:
     return _sopify_app_root() / KIT_DIR_REL
 
 
-def is_logged_in() -> bool:
-    """Best-effort check: `sbx ls` succeeds only after login.
+def _macos_auth_dir() -> Path:
+    return (
+        Path.home()
+        / "Library" / "Application Support"
+        / "com.docker.sandboxes"
+        / "com.docker.sandboxes-auth" / "sandboxes-auth"
+    )
 
-    Kept under 1s so `sopify doctor` stays inside the < 3s gate (REQ-P2).
+
+def is_logged_in() -> bool:
+    """Detect sbx login state via the on-disk credential marker.
+
+    `sbx ls` works but takes ~1.5s — too slow for `sopify doctor` to
+    keep its Gate P2 < 3s budget. The auth metadata file exists only
+    after successful `sbx login` so we check that first (instant).
+    Falls back to a subprocess probe when the file layout is unknown
+    (Linux/Windows paths may differ from macOS).
     """
+    # macOS — auth metadata files appear under sandboxes-auth/* per workspace
+    auth_dir = _macos_auth_dir()
+    if auth_dir.is_dir():
+        for entry in auth_dir.iterdir():
+            if (entry / "metadata.json").is_file():
+                return True
+        return False
+
+    # Other platforms — fall back to a slow subprocess probe.
     try:
         r = subprocess.run(
             [SBX_BINARY, "ls"],
-            capture_output=True, text=True, timeout=1,
+            capture_output=True, text=True, timeout=3,
         )
         return r.returncode == 0
     except Exception:
