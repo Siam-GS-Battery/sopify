@@ -55,17 +55,26 @@ def _emit_no_sandbox_event(reason: str) -> None:
 def _build_docker_argv(argv: List[str]) -> List[str]:
     home = _sopify_home()
     cwd = os.getcwd()
+    # Ensure the sessions directory exists so Docker mounts it as a dir.
+    os.makedirs(os.path.join(home, "sessions"), exist_ok=True)
     cmd = [
         "docker", "run", "--rm", "-i",
         "--network", SANDBOX_NETWORK,
         "--name", f"sopify-{os.getpid()}",
         "-v", f"{cwd}:{WORKSPACE}:rw",                         # REQ-1.2.5
-        "-v", f"{home}/auth.json:/sopify-auth/auth.json:ro",   # REQ-1.2.6
-        "-v", f"{home}/settings.json:/sopify-config/settings.json:ro",  # REQ-1.2.7
         "-v", f"{home}/sessions:/sopify-sessions:rw",          # REQ-1.2.8
         "-w", WORKSPACE,
         "-e", "SOPIFY_IN_SANDBOX=1",
     ]
+    # File mounts: only bind-mount if the file actually exists. Docker would
+    # otherwise create the path as a directory, which then breaks every
+    # subsequent host-side write (see set_key in plugins/sopify_providers/auth.py).
+    auth_file = os.path.join(home, "auth.json")
+    if os.path.isfile(auth_file):
+        cmd.extend(["-v", f"{auth_file}:/sopify-auth/auth.json:ro"])  # REQ-1.2.6
+    settings_file = os.path.join(home, "settings.json")
+    if os.path.isfile(settings_file):
+        cmd.extend(["-v", f"{settings_file}:/sopify-config/settings.json:ro"])  # REQ-1.2.7
     if sys.stdin.isatty():
         cmd.append("-t")
     cmd.append(SANDBOX_IMAGE)

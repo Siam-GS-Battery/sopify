@@ -42,7 +42,16 @@ def get(provider: str) -> Optional[str]:
 def _write_atomic(data: Dict[str, str]) -> None:
     p = _auth_path()
     p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Docker bind-mounting a non-existent file path creates a directory at
+    # that path. Detect + repair so `sopify login` works on machines that
+    # ran the sandbox once before auth was set up.
+    if p.is_dir():
+        import shutil
+        shutil.rmtree(p)
     tmp = p.with_suffix(".json.tmp")
+    if tmp.is_dir():
+        import shutil
+        shutil.rmtree(tmp)
     tmp.write_text(json.dumps(data, indent=2))
     tmp.chmod(0o600)  # REQ-2.2.1 / REQ-11.1
     tmp.replace(p)
