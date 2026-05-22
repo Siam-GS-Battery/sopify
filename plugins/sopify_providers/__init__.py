@@ -10,11 +10,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import auth, router
+from . import auth, auth_override, router
 
 logger = logging.getLogger(__name__)
 
 ROUTER: router.ProviderRouter = router.ProviderRouter.from_settings()
+
+# Apply at import time — before Hermes' Anthropic adapter is touched.
+# When user does `sopify login`, that key MUST win over any Claude Code
+# OAuth credentials that happen to be on the host (REQ-2.2.2 spirit).
+_AUTH_OVERRIDE_KEY = auth_override.apply()
 
 
 def reload_router() -> None:

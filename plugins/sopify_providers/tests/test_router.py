@@ -57,3 +57,31 @@ def test_non_auth_failure_not_blacklisted(tmp_path, monkeypatch):
     r = mod.ProviderRouter()
     r.record_failure("anthropic", status=500)  # server error, transient
     assert r.pick() == "anthropic"
+
+
+def test_auth_override_masks_claude_code(monkeypatch, tmp_path):
+    """Sopify login key must beat Claude Code OAuth (REQ-2.2.2 spirit)."""
+    import json, os, sys
+    monkeypatch.setenv("SOPIFY_HOME", str(tmp_path))
+    (tmp_path / "auth.json").write_text(json.dumps({"anthropic": "sk-ant-api03-TEST"}))
+    os.chmod(tmp_path / "auth.json", 0o600)
+    # Pre-pollute env to simulate a Claude Code session.
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "cc-leftover")
+    monkeypatch.setenv("ANTHROPIC_TOKEN", "leftover")
+
+    # Stub the agent module so apply() can mask without importing the
+    # whole Hermes runtime in the test.
+    fake_adapter = type(sys)("agent.anthropic_adapter")
+    fake_adapter.read_claude_code_credentials = lambda: {"access_token": "shouldnt-win"}
+    sys.modules.setdefault("agent", type(sys)("agent"))
+    sys.modules["agent.anthropic_adapter"] = fake_adapter
+
+    import importlib
+    ao = importlib.reload(importlib.import_module("plugins.sopify_providers.auth_override"))
+    out = ao.apply()
+    assert out == "sk-ant-api03-TEST"
+    assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api03-TEST"
+    assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") is None
+    assert os.environ.get("ANTHROPIC_TOKEN") is None
+    # The mask must make read_claude_code_credentials return None.
+    assert fake_adapter.read_claude_code_credentials() is None
