@@ -621,13 +621,32 @@ kbd {
   padding: 2px 6px;
 }
 
-/* ---------- 10. Chat terminal background ---------- */
-/* The /chat tab embeds an xterm.js terminal — keep its native dark bg    */
-/* (terminals look weird on white) but blend the surrounding chrome.      */
+/* ---------- 10. Chat terminal background (light) ---------- */
+/* The /chat tab embeds an xterm.js terminal. Match the rest of the
+   dashboard (Rhino white surface) by forcing a white background.
+   The ui-tui's SOPIFY_LIGHT theme renders dark text on this. */
 :root[data-theme-name="sopify"] .xterm,
+:root[data-theme-name="sopify"] [class*="xterm-screen"],
 :root[data-theme-name="sopify"] [class*="xterm-viewport"] {
-  background: #1a1f2e !important;  /* slightly lighter than pure black */
-  border-radius: 8px;
+  background: #FFFFFF !important;
+  border-radius: 12px;
+}
+:root[data-theme-name="sopify"] .xterm .xterm-rows {
+  color: #03061E !important;
+}
+/* xterm.js cursor block on light bg — use primary blue */
+:root[data-theme-name="sopify"] .xterm .xterm-cursor-block {
+  background-color: #1D63ED !important;
+  color: #FFFFFF !important;
+}
+/* Chat panel container around the terminal */
+:root[data-theme-name="sopify"] [data-chat-pane],
+:root[data-theme-name="sopify"] [class*="ChatPane"],
+:root[data-theme-name="sopify"] [class*="chat-pane"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
 }
 
 /* ---------- 11. Scrollbar consistency ---------- */

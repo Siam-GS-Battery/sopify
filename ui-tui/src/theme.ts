@@ -304,6 +304,53 @@ export const DARK_THEME: Theme = {
   bannerHero: ''
 }
 
+// Sopify light terminal palette — blue primary + neutral grays.
+// Matches CSS_STYLE.md tokens: --primary #1D63ED, --accent #0DB7ED,
+// --text-primary #03061E, --text-secondary #384D54, --bg #F8FAFC.
+// Used by the in-browser /chat tab where the dashboard already runs
+// on a light background, so the TUI needs dark text on light.
+export const SOPIFY_LIGHT_THEME: Theme = {
+  color: {
+    primary: '#1D63ED',
+    accent: '#0DB7ED',
+    border: '#1857D4',
+    text: '#03061E',
+    muted: '#384D54',
+    completionBg: '#F3F4F6',
+    completionCurrentBg: mix('#F3F4F6', '#1D63ED', 0.18),
+    completionMetaBg: '#F3F4F6',
+    completionMetaCurrentBg: mix('#F3F4F6', '#1D63ED', 0.18),
+
+    label: '#384D54',
+    ok: '#10B981',
+    error: '#EF4444',
+    warn: '#F59E0B',
+
+    prompt: '#1D63ED',
+    sessionLabel: '#384D54',
+    sessionBorder: '#1857D4',
+
+    statusBg: '#F3F4F6',
+    statusFg: '#03061E',
+    statusGood: '#10B981',
+    statusWarn: '#F59E0B',
+    statusBad: '#EF4444',
+    statusCritical: '#B71C1C',
+    selectionBg: mix('#F8FAFC', '#1D63ED', 0.18),
+
+    diffAdded: 'rgb(220,252,231)',
+    diffRemoved: 'rgb(254,226,226)',
+    diffAddedWord: 'rgb(22,163,74)',
+    diffRemovedWord: 'rgb(220,38,38)',
+    shellDollar: '#1D63ED'
+  },
+
+  brand: BRAND,
+
+  bannerLogo: '',
+  bannerHero: ''
+}
+
 // Light-terminal palette: darker golds/ambers that stay legible on white
 // backgrounds. Same shape as DARK_THEME so `fromSkin` still layers on top
 // cleanly (#11300).
@@ -505,10 +552,20 @@ export function normalizeThemeForAnsiLightTerminal(
 
 const DEFAULT_LIGHT_MODE = detectLightMode()
 
+// Sopify-specific override: when running in the browser-embedded PTY
+// (HERMES_TUI_INLINE=1 set by hermes_cli/web_server.py for the dashboard
+// /chat tab), force the Sopify light-blue theme so the terminal matches
+// the rest of the dashboard chrome. The native CLI TUI keeps its
+// auto-detect behaviour (dark on dark, light on light).
+const _SOPIFY_INLINE = (process.env.HERMES_TUI_INLINE === '1')
+  || (process.env.SOPIFY_TUI_THEME === 'sopify-light')
+
 export const DEFAULT_THEME: Theme = normalizeThemeForAnsiLightTerminal(
-  DEFAULT_LIGHT_MODE ? LIGHT_THEME : DARK_THEME,
+  _SOPIFY_INLINE
+    ? SOPIFY_LIGHT_THEME
+    : (DEFAULT_LIGHT_MODE ? LIGHT_THEME : DARK_THEME),
   process.env,
-  DEFAULT_LIGHT_MODE
+  _SOPIFY_INLINE || DEFAULT_LIGHT_MODE
 )
 
 // ── Skin → Theme ─────────────────────────────────────────────────────
