@@ -47,29 +47,39 @@ COPY --chown=sopify:sopify . /opt/sopify
 #   cli         → interactive TUI menus
 #   anthropic   → primary provider SDK
 #   pty         → ptyprocess for the /chat tab
-# This is the slowest step in the build (~60-90s) but happens once at
-# image-build time, not at every microVM cold start.
+# Slow step (~60-90s) but happens once at build time. We do NOT use
+# `|| true` here — a failed uv sync MUST fail the build, otherwise the
+# image ships without yaml/fastapi/anthropic and the dashboard dies
+# the first time it tries to import them.
 USER sopify
 RUN uv sync --frozen \
         --extra web --extra cli --extra anthropic --extra pty \
-    || uv sync --extra web --extra cli --extra anthropic --extra pty \
-    || true
+    || uv sync \
+        --extra web --extra cli --extra anthropic --extra pty
 
 # Wire the wrapper so `sopify ...` works inside the microVM regardless
-# of how sbx invokes commands.
+# of how sbx invokes commands. We write a tiny bash wrapper that
+# EXPLICITLY invokes the venv python — a Python-shebang shim resolves
+# python3 via PATH lookup, which can land on system /usr/bin/python3
+# (no deps) instead of the venv.
 USER root
-RUN ln -sf /opt/sopify/sopify /usr/local/bin/sopify \
-    && chmod +x /opt/sopify/sopify
+RUN cat > /usr/local/bin/sopify <<'WRAPPER_EOF' \
+ && chmod +x /usr/local/bin/sopify
+#!/usr/bin/env bash
+exec /opt/sopify/.venv/bin/python /opt/sopify/sopify "$@"
+WRAPPER_EOF
 
 # Pre-declare mountpoints so sbx's bind-mount lands at expected paths.
 RUN mkdir -p /workspace /sopify-auth /sopify-config /sopify-sessions \
     && chown -R sopify:sopify /workspace /sopify-sessions /opt/sopify
 
-# Smoke test inside the build so a broken venv breaks the build, not
-# the user's first dashboard launch.
+# Smoke test: confirm yaml + fastapi + anthropic SDK ALL import via the
+# venv python. If any of these are missing the build fails here, not
+# at the user's first dashboard launch.
 USER sopify
-RUN python3 -c "import sys; sys.path.insert(0, '/opt/sopify'); \
-                from plugins.sopify_core import version, paths, doctor; \
+RUN /opt/sopify/.venv/bin/python -c "import yaml, fastapi, uvicorn, anthropic, ptyprocess; print('venv smoke ok')"
+RUN /opt/sopify/.venv/bin/python -c "import sys; sys.path.insert(0, '/opt/sopify'); \
+                from plugins.sopify_core import version; \
                 print('sopify build smoke:', version.full_version_string())"
 
 USER sopify
