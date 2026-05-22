@@ -159,6 +159,55 @@ def _cmd_chat(argv: list[str]) -> int:
     return _delegate_to_hermes(argv or [])
 
 
+def _cmd_login(argv: list[str]) -> int:
+    """sopify login — host-side API key setup. Writes ~/.sopify/auth.json."""
+    _show_banner(subtitle="Login — set up API key")
+    from importlib import import_module
+    auth = import_module("plugins.sopify_providers.auth")  # type: ignore[attr-defined]
+    auth.login_interactive()
+    return 0
+
+
+def _cmd_logout(argv: list[str]) -> int:
+    """sopify logout — zero-fill and remove credentials."""
+    _show_banner(subtitle="Logout — zero-fill credentials")
+    from importlib import import_module
+    auth = import_module("plugins.sopify_providers.auth")  # type: ignore[attr-defined]
+    provider = argv[0] if argv else None
+    auth.logout(provider)
+    print("sopify: credentials cleared.")
+    return 0
+
+
+def _cmd_onboard(argv: list[str]) -> int:
+    """sopify onboard — welcome + audit consent flow."""
+    _show_banner(subtitle="Onboard — welcome + audit consent")
+    from importlib import import_module
+    onboard = import_module("plugins.sopify_management.onboard")  # type: ignore[attr-defined]
+    return onboard.run_interactive()
+
+
+def _cmd_mode(mode_arg: str, argv: list[str]) -> int:
+    """sopify /vibe | /living | /code-with-you — slash-command mode entry.
+
+    Current implementation runs on the host (via _delegate_to_hermes) with
+    sopify plugins preloaded so guardrails/OTel/skill injection are active.
+    A future revision will run inside the sandbox image once that build is
+    verified end-to-end.
+    """
+    name = mode_arg.lstrip("/")
+    _show_banner(subtitle=f"Mode: /{name}")
+    # Activate the mode profile before handing off so sopify_modes.active_mode()
+    # reflects the user's choice from the very first turn.
+    try:
+        from importlib import import_module
+        modes = import_module("plugins.sopify_modes")
+        modes._activate(name)
+    except Exception as exc:
+        print(f"sopify: failed to activate mode {name}: {exc}", file=sys.stderr)
+    return _delegate_to_hermes(argv)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) <= 1 or argv[1] in ("-h", "--help"):
         _print_help()
@@ -174,8 +223,22 @@ def main(argv: list[str]) -> int:
         return _cmd_dashboard(argv[2:])
     if sub == "chat":
         return _cmd_chat(argv[2:])
-    # Everything else routes through the sandbox.
-    return _spawn_sandbox(argv[1:])
+    if sub == "login":
+        return _cmd_login(argv[2:])
+    if sub == "logout":
+        return _cmd_logout(argv[2:])
+    if sub == "onboard":
+        return _cmd_onboard(argv[2:])
+    # Mode slash commands route to the Hermes runtime with sopify plugins
+    # preloaded. The Docker sandbox path is scaffolded but not yet wired
+    # end-to-end; it'll be re-enabled once the sandbox image is verified.
+    if sub in ("/vibe", "/living", "/code-with-you",
+               "vibe", "living", "code-with-you"):
+        slash = sub if sub.startswith("/") else f"/{sub}"
+        return _cmd_mode(slash, argv[2:])
+    # Last resort — pass through to Hermes (for `sopify model`, `sopify plugins`,
+    # etc. — anything the user might run that Hermes natively handles).
+    return _delegate_to_hermes(argv[1:])
 
 
 if __name__ == "__main__":
