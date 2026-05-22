@@ -38,10 +38,54 @@ const DEFAULT_LAYOUT: ThemeLayout = {
 // Themes
 // ---------------------------------------------------------------------------
 
+/** Roboto-based light theme matching CSS_STYLE.md — the Sopify look. */
+const SOPIFY_TYPOGRAPHY: ThemeTypography = {
+  fontSans:
+    'Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif',
+  fontMono:
+    '"SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace',
+  baseSize: "13px",
+  lineHeight: "1.5",
+  letterSpacing: "0",
+};
+
+const SOPIFY_LAYOUT: ThemeLayout = {
+  radius: "0.5rem", // 8px — between Rhino's 6px input and 16px card
+  density: "comfortable",
+};
+
+/**
+ * Sopify (Light) — the canonical Sopify look.
+ *
+ * Palette ports the Rhino AI Agent design tokens (CSS_STYLE.md):
+ *   --primary  #1D63ED   (blue CTA)
+ *   --accent   #0DB7ED   (light blue / output series)
+ *   --bg       #F8FAFC   (viewport background)
+ *   --surface  #FFFFFF   (card / sidebar)
+ *
+ * Light mode only — the Nous DS layer maps these onto `background`,
+ * `midground`, `foreground`. `background` is the deepest pane, so we
+ * use the surface white; `midground` becomes the page bg.
+ */
+export const sopifyTheme: DashboardTheme = {
+  name: "sopify",
+  label: "Sopify",
+  description: "Clean light dashboard — blue primary, Roboto, Rhino-style tokens",
+  palette: {
+    background: { hex: "#FFFFFF", alpha: 1 },
+    midground: { hex: "#F8FAFC", alpha: 1 },
+    foreground: { hex: "#03061E", alpha: 1 },
+    warmGlow: "rgba(29, 99, 237, 0.18)", // primary-tinted glow
+    noiseOpacity: 0,
+  },
+  typography: SOPIFY_TYPOGRAPHY,
+  layout: SOPIFY_LAYOUT,
+};
+
 export const defaultTheme: DashboardTheme = {
   name: "default",
-  label: "Hermes Teal",
-  description: "Classic dark teal — the canonical Hermes look",
+  label: "Hermes Teal (legacy)",
+  description: "Classic dark teal — the original upstream Hermes look",
   palette: {
     background: { hex: "#041c1c", alpha: 1 },
     midground: { hex: "#ffe6cb", alpha: 1 },
@@ -205,6 +249,8 @@ export const defaultLargeTheme: DashboardTheme = {
 };
 
 export const BUILTIN_THEMES: Record<string, DashboardTheme> = {
+  // sopify must come first so the default theme picker lands here.
+  sopify: sopifyTheme,
   default: defaultTheme,
   "default-large": defaultLargeTheme,
   midnight: midnightTheme,

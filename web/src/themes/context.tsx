@@ -7,7 +7,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { BUILTIN_THEMES, defaultTheme } from "./presets";
+import { BUILTIN_THEMES, sopifyTheme } from "./presets";
+// Sopify is now the default. `defaultTheme` (Hermes Teal) is still exported
+// from presets.ts as a legacy theme accessible via the picker.
+const defaultTheme = sopifyTheme;
 import type {
   DashboardTheme,
   ThemeAssets,
@@ -420,7 +423,7 @@ export function useTheme(): ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: defaultTheme,
-  themeName: "default",
+  themeName: "sopify",
   availableThemes: Object.values(BUILTIN_THEMES).map((t) => ({
     name: t.name,
     label: t.label,
