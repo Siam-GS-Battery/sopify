@@ -106,6 +106,29 @@ def _sandbox_exists(name: str) -> bool:
         return False
 
 
+def _sandbox_has_sopify(name: str) -> bool:
+    """True if the running sandbox was built from sopify-sandbox image.
+
+    We probe for /usr/local/bin/sopify which only exists in our custom image.
+    Stale sandboxes created before --template flow landed will lack it.
+    """
+    try:
+        r = subprocess.run(
+            [SBX_BINARY, "exec", name, "test", "-x", "/usr/local/bin/sopify"],
+            capture_output=True, timeout=10,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _remove_sandbox(name: str) -> None:
+    subprocess.run(
+        [SBX_BINARY, "rm", "--force", name],
+        capture_output=True, timeout=15,
+    )
+
+
 SOPIFY_IMAGE = "sopify-sandbox:latest"
 
 
@@ -179,8 +202,13 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     app_root = str(_sopify_app_root())
     sandbox = _sandbox_name_for_cwd()
 
-    # 1. Ensure sandbox exists (idempotent — re-uses same microVM per cwd).
+    # 1. Ensure sandbox exists with the right template (idempotent).
     workspaces = [cwd, f"{app_root}:ro"]
+    if _sandbox_exists(sandbox) and _image_exists() and not _sandbox_has_sopify(sandbox):
+        # Stale sandbox from before --template support landed. Recreate.
+        print(f"sopify: recreating sandbox '{sandbox}' with sopify-sandbox template...",
+              file=sys.stderr)
+        _remove_sandbox(sandbox)
     rc = _ensure_sandbox(sandbox, workspaces)
     if rc != 0 and not _sandbox_exists(sandbox):
         print(f"sopify: sbx create failed (rc={rc})", file=sys.stderr)
