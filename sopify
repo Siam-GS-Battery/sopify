@@ -18,7 +18,9 @@ import os
 import sys
 
 # Make plugins importable without packaging tricks.
-ROOT = os.path.dirname(os.path.abspath(__file__))
+# Use realpath so symlinks (e.g. ~/.local/bin/sopify → ~/.sopify-app/sopify)
+# resolve to the actual repo root, not the bin directory.
+ROOT = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, ROOT)
 
 
