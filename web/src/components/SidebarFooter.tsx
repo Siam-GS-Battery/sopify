@@ -1,11 +1,9 @@
 import { Typography } from "@/components/NouiTypography";
 import { useSidebarStatus } from "@/hooks/useSidebarStatus";
 import { cn } from "@/lib/utils";
-import { useI18n } from "@/i18n";
 
 export function SidebarFooter() {
   const status = useSidebarStatus();
-  const { t } = useI18n();
 
   return (
     <div
