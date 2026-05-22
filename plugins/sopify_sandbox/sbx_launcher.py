@@ -199,6 +199,41 @@ def _publish_port(name: str, host_port: int, sbx_port: int) -> int:
     )
 
 
+def _link_hermes_into_sandbox(name: str) -> None:
+    """Symlink the mounted host ~/.hermes/.env into the sopify user's $HOME.
+
+    sbx kit schema v1 only parses `network.allowedDomains` — its `startup`
+    block is silently ignored. So instead of relying on kit-time symlinking,
+    we run the link command via `sbx exec` right after sandbox creation
+    (before Hermes' env_loader reads the .env at dashboard launch).
+
+    The mount path inside the microVM is the host's absolute path (sbx
+    preserves it). Probe the standard macOS / Linux home locations and
+    link the first match into the sopify user's $HOME/.hermes/.
+    """
+    script = r"""
+mkdir -p "$HOME/.hermes"
+hermes_src=""
+for candidate in /Users/*/.hermes /home/*/.hermes /root/.hermes; do
+  if [ -d "$candidate" ] && [ "$candidate" != "$HOME/.hermes" ]; then
+    hermes_src="$candidate"
+    break
+  fi
+done
+if [ -n "$hermes_src" ]; then
+  for f in .env auth.json; do
+    if [ -e "$hermes_src/$f" ]; then
+      ln -sf "$hermes_src/$f" "$HOME/.hermes/$f"
+    fi
+  done
+fi
+"""
+    subprocess.run(
+        [SBX_BINARY, "exec", name, "bash", "-lc", script],
+        capture_output=True, timeout=15,
+    )
+
+
 def spawn(argv: List[str], *, with_kit: bool = True,
           publish_ports: Optional[List[int]] = None) -> int:
     """Run argv inside an sbx microVM. Returns the exit code.
@@ -226,21 +261,26 @@ def spawn(argv: List[str], *, with_kit: bool = True,
         print("  sbx login", file=sys.stderr)
         return 13
 
-    cwd = str(Path.cwd())
-    app_root = str(_sopify_app_root())
+    cwd_resolved = Path.cwd().resolve()
+    cwd = str(cwd_resolved)
+    app_root_resolved = _sopify_app_root().resolve()
     sandbox = _sandbox_name_for_cwd()
 
     # 1. Ensure sandbox exists with the right template (idempotent).
     #
-    # Mount ~/.hermes/ as :ro so the host's .env (containing the user's
-    # ANTHROPIC API key) reaches the microVM. The kit's startup script
-    # symlinks /workspaces/.hermes/.env into /home/sopify/.hermes/.env
-    # so Hermes' env_loader picks it up at runtime. Without this mount the
-    # sandbox slash_workers run with an empty/13-char placeholder API key
-    # and silently fail all model calls (chat tab stays empty).
-    workspaces = [cwd, f"{app_root}:ro"]
+    # Workspace mounts:
+    #   - cwd          (rw, primary)  — user's project
+    #   - app_root :ro                 — installed Sopify source (sopify
+    #     command + plugins). Skip when cwd == app_root (dev mode where
+    #     the user runs sopify from inside the repo, or has symlinked
+    #     ~/.sopify-app → source repo). sbx rejects duplicate workspaces.
+    #   - ~/.hermes :ro                — host .env / auth.json so the
+    #     microVM's env_loader sees the user's ANTHROPIC_TOKEN.
+    workspaces = [cwd]
+    if app_root_resolved != cwd_resolved:
+        workspaces.append(f"{app_root_resolved}:ro")
     hermes_home = Path.home() / ".hermes"
-    if hermes_home.is_dir():
+    if hermes_home.is_dir() and hermes_home.resolve() != cwd_resolved:
         workspaces.append(f"{hermes_home}:ro")
     if _sandbox_exists(sandbox) and _image_exists() and not _sandbox_has_sopify(sandbox):
         # Stale sandbox from before --template support landed. Recreate.
@@ -251,6 +291,12 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     if rc != 0 and not _sandbox_exists(sandbox):
         print(f"sopify: sbx create failed (rc={rc})", file=sys.stderr)
         return rc
+
+    # 1b. Link mounted host ~/.hermes/ into the sopify user's $HOME so
+    #     Hermes' env_loader picks up ANTHROPIC_TOKEN at dashboard launch.
+    #     sbx kit `startup` blocks are silently dropped (schema v1 only
+    #     parses network.allowedDomains), so we run the symlink ourselves.
+    _link_hermes_into_sandbox(sandbox)
 
     # 2. Publish each requested port.
     if publish_ports:

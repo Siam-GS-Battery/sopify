@@ -94,9 +94,18 @@ def _sync_hermes_env_file(api_key: str) -> None:
     Removes CLAUDE_CODE_OAUTH_TOKEN if present (it would lose to step 4
     via `_prefer_refreshable_claude_code_token`, but we strip it anyway
     to be belt-and-braces).
+
+    Inside the microVM ($SOPIFY_IN_SANDBOX=1) the host's ~/.hermes is
+    mounted read-only and a symlink already points $HOME/.hermes/.env
+    at it. Writing would EROFS — and is also unnecessary, because the
+    host already wrote the key (that's how it reached the microVM in
+    the first place). So skip the write inside the sandbox.
     """
     import re
     from pathlib import Path
+
+    if os.environ.get("SOPIFY_IN_SANDBOX") == "1":
+        return
 
     env_path = Path.home() / ".hermes" / ".env"
     env_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,7 +142,15 @@ def _sync_hermes_env_file(api_key: str) -> None:
     if not new_text.endswith("\n"):
         new_text += "\n"
     if new_text != text:
-        env_path.write_text(new_text, encoding="utf-8")
+        try:
+            env_path.write_text(new_text, encoding="utf-8")
+        except OSError as exc:
+            # Read-only filesystem (e.g. unexpected :ro mount) or
+            # permission denied. The host already has the key; no need
+            # to fail the dashboard launch over a sync write.
+            logger.warning("sopify-providers: skipped %s write (%s)",
+                           env_path, exc)
+            return
         try:
             env_path.chmod(0o600)
         except Exception:
