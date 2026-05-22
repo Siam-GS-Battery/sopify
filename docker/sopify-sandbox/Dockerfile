@@ -20,9 +20,11 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/sopify/.venv \
     PATH=/opt/sopify/.venv/bin:/usr/local/bin:/usr/bin:/bin
 
-# System deps. tini reaps zombies; bash is what sbx exec calls.
+# System deps. tini reaps zombies; bash is what sbx exec calls;
+# passwd provides useradd; adduser is the friendly wrapper.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tini ca-certificates curl git bash \
+        passwd adduser \
         nodejs npm \
         python3 python3-venv python3-dev build-essential \
         ripgrep ffmpeg \
@@ -31,8 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy uv from its dedicated image.
 COPY --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 
-# REQ-11.4 — non-root user.
-RUN useradd --uid 10001 --create-home --home-dir /home/sopify --shell /bin/bash sopify
+# REQ-11.4 — non-root user. Use absolute path because some slim base
+# images don't put /usr/sbin on the default /bin/sh PATH.
+RUN /usr/sbin/useradd --uid 10001 --create-home --home-dir /home/sopify --shell /bin/bash sopify
 
 # Copy entire repo into image. Layered after deps so source edits don't
 # bust the apt cache layer.
