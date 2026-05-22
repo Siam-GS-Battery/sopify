@@ -37,6 +37,12 @@ COPY --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 # images don't put /usr/sbin on the default /bin/sh PATH.
 RUN /usr/sbin/useradd --uid 10001 --create-home --home-dir /home/sopify --shell /bin/bash sopify
 
+# Pre-create + chown /opt/sopify so the sopify user can write into it
+# (specifically /opt/sopify/.venv) when uv sync runs as that user later.
+# Without this, WORKDIR creates /opt/sopify as root-owned and COPY's
+# --chown only affects the COPIED files, not the parent directory.
+RUN mkdir -p /opt/sopify && chown sopify:sopify /opt/sopify
+
 # Copy entire repo into image. Layered after deps so source edits don't
 # bust the apt cache layer.
 WORKDIR /opt/sopify
