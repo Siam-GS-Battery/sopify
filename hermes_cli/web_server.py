@@ -3748,7 +3748,8 @@ def mount_spa(application: FastAPI):
 # Built-in dashboard themes — label + description only.  The actual color
 # definitions live in the frontend (web/src/themes/presets.ts).
 _BUILTIN_DASHBOARD_THEMES = [
-    {"name": "default",       "label": "Hermes Teal",         "description": "Classic dark teal — the canonical Hermes look"},
+    {"name": "sopify",        "label": "Sopify",              "description": "Clean light dashboard — blue primary, Roboto, Rhino-style tokens"},
+    {"name": "default",       "label": "Hermes Teal (legacy)","description": "Classic dark teal — the original upstream Hermes look"},
     {"name": "default-large", "label": "Hermes Teal (Large)", "description": "Hermes Teal with bigger fonts and roomier spacing"},
     {"name": "midnight",      "label": "Midnight",            "description": "Deep blue-violet with cool accents"},
     {"name": "ember",     "label": "Ember",          "description": "Warm crimson and bronze — forge vibes"},
@@ -4005,7 +4006,20 @@ async def get_dashboard_themes():
     them without a stub.
     """
     config = load_config()
-    active = cfg_get(config, "dashboard", "theme", default="default")
+    active = cfg_get(config, "dashboard", "theme", default="sopify")
+    # Sopify migration: if the user previously selected a Hermes built-in
+    # via the legacy picker, promote to sopify so the new branding sticks.
+    _HERMES_LEGACY = {"default", "default-large", "midnight", "ember",
+                      "mono", "cyberpunk", "rose"}
+    if active in _HERMES_LEGACY:
+        active = "sopify"
+        if "dashboard" not in config:
+            config["dashboard"] = {}
+        config["dashboard"]["theme"] = "sopify"
+        try:
+            save_config(config)
+        except Exception:
+            pass
     user_themes = _discover_user_themes()
     seen = set()
     themes = []
@@ -4576,7 +4590,7 @@ def start_server(
                 "(headless Linux). Pass --no-open to suppress this detection."
             )
 
-    print(f"  Hermes Web UI → http://{host}:{port}")
+    print(f"  Sopify Dashboard → http://{host}:{port}")
     # proxy_headers=False so _ws_client_is_allowed sees the real connection peer
     # rather than X-Forwarded-For's rewritten value (which would defeat the
     # loopback gate when behind a reverse proxy).
