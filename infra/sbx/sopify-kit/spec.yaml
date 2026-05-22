@@ -1,0 +1,91 @@
+schemaVersion: "1"
+kind: mixin
+name: sopify
+description: |
+  Sopify governance overlay for Docker Sandboxes.
+  Runs Hermes + Sopify plugins + 3 modes (/vibe, /living, /code-with-you)
+  inside an sbx microVM with org-managed network policy + env passthrough.
+
+  REQ traceability:
+    REQ-1.2.1 — runtime inside microVM (sbx provides VT-x isolation)
+    REQ-1.2.2 — host launcher = sbx CLI only
+    REQ-1.2.4 — sandboxes cleaned automatically by sbx
+    REQ-1.2.*   — egress controlled by network.allowedDomains
+    REQ-2.2.2 — API keys flow via env (skipIfEnv passthrough)
+    REQ-9.1.* — IT can centrally manage this kit via Docker Admin Console
+    REQ-11.4  — non-root inside microVM (sbx default)
+
+# REQ-1.2.2 + REQ-1.2.6 — default whitelist; IT pre-approve via Docker
+# Admin Console policy push.
+network:
+  allowedDomains:
+    # LLM providers (REQ-2.1.2 cascade)
+    - api.anthropic.com
+    - api.openai.com
+    - openrouter.ai
+    - "*.openrouter.ai"
+    - api.novita.ai
+    - "*.novita.ai"
+    # Hugging Face
+    - api-inference.huggingface.co
+    - huggingface.co
+    - "*.huggingface.co"
+    # OTel telemetry collector (REQ-7.2)
+    - otel-collector.gsbattery.local
+    # GS Battery internal services
+    - "*.gsbattery.local"
+    - "*.gsbattery.co.th"
+    # Python wheels + npm
+    - pypi.org
+    - files.pythonhosted.org
+    - registry.npmjs.org
+    # GitHub (skill bundles, kits)
+    - api.github.com
+    - raw.githubusercontent.com
+
+# REQ-2.2.2 — host env passes through so sopify-providers' auth.json
+# values land in the microVM. skipIfEnv lets sbx pass the value when
+# the host has it set, and skip silently otherwise.
+env:
+  - name: SOPIFY_IN_SANDBOX
+    value: "1"
+  - name: SOPIFY_SANDBOX_BACKEND
+    value: "sbx"
+  - name: PYTHONUNBUFFERED
+    value: "1"
+  - name: HERMES_TUI_INLINE
+    value: "1"
+  - name: ANTHROPIC_TOKEN
+    skipIfEnv: ANTHROPIC_TOKEN
+  - name: ANTHROPIC_API_KEY
+    skipIfEnv: ANTHROPIC_API_KEY
+  - name: OPENROUTER_API_KEY
+    skipIfEnv: OPENROUTER_API_KEY
+  - name: NOVITA_API_KEY
+    skipIfEnv: NOVITA_API_KEY
+  - name: HUGGINGFACE_TOKEN
+    skipIfEnv: HUGGINGFACE_TOKEN
+  - name: SOPIFY_NO_BANNER
+    skipIfEnv: SOPIFY_NO_BANNER
+  - name: OTEL_EXPORTER_OTLP_ENDPOINT
+    skipIfEnv: OTEL_EXPORTER_OTLP_ENDPOINT
+
+# Startup commands — run once when the microVM boots.
+startup:
+  - command: |
+      # Ensure /opt/sopify resolves (mounted by `sbx run --workspace`)
+      # and create the symlink so `sopify ...` works without absolute paths.
+      if [ -x /workspaces/sopify-app/sopify ]; then
+        ln -sf /workspaces/sopify-app/sopify /usr/local/bin/sopify
+      elif [ -x /opt/sopify/sopify ]; then
+        ln -sf /opt/sopify/sopify /usr/local/bin/sopify
+      fi
+      mkdir -p ~/.sopify/sessions
+  - command: |
+      # If Sopify settings were mounted from host, link them into ~/.sopify
+      # so plugins can read them at the canonical path.
+      for f in auth.json settings.json profile.json network-policy.json consent.json; do
+        if [ -e "/sopify-config/$f" ]; then
+          ln -sf "/sopify-config/$f" "$HOME/.sopify/$f"
+        fi
+      done

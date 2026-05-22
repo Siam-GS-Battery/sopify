@@ -102,17 +102,38 @@ def _spawn_sandbox(argv: list[str]) -> int:
     return launcher.spawn(argv)
 
 
-def _delegate_to_hermes(argv: list[str]) -> int:
-    """Run the underlying Hermes CLI directly on the host (no sandbox).
+def _sbx_available() -> bool:
+    """Check if Docker Sandboxes (sbx) CLI is installed + logged in."""
+    if os.environ.get("SOPIFY_NO_SBX") == "1":
+        return False
+    try:
+        from importlib import import_module
+        sbx = import_module("plugins.sopify_sandbox.sbx_launcher")
+        return sbx.is_available() and sbx.is_logged_in()
+    except Exception:
+        return False
 
-    Used for commands where the sandbox is overhead — the web dashboard
-    runs on the host because it serves HTTP to a browser also on the host.
-    Sopify plugins are pre-loaded so the dashboard sees the sopify modes,
-    guardrails, OTel events, etc.
+
+def _delegate_to_hermes(argv: list[str], *, publish_ports: list[int] | None = None) -> int:
+    """Run the underlying runtime.
+
+    Preferred path: route through `sbx run shell` so the runtime lives in a
+    Docker microVM with org-managed network policy + env passthrough applied
+    by the Sopify kit (REQ-1.2.1 / REQ-9.1).
+
+    Fallback: when sbx isn't installed or the user explicitly opted out
+    (SOPIFY_NO_SBX=1), run Hermes directly on the host with sopify plugins
+    preloaded. Sopify governance (guardrails, OTel emit, mode profiles)
+    still fires but without sandbox isolation.
     """
-    # Ensure sopify plugins are picked up by Hermes' plugin manager.
-    # Hermes scans entry-points + ~/.hermes/plugins; we just import them so
-    # any side-effecting registry hooks run before main() starts.
+    if _sbx_available():
+        from importlib import import_module
+        sbx = import_module("plugins.sopify_sandbox.sbx_launcher")
+        # Make sopify wrapper visible inside the microVM via the kit's
+        # startup script. argv here is what runs after sbx mounts + boots.
+        return sbx.spawn(argv, publish_ports=publish_ports)
+
+    # Host fallback.
     _preload_sopify_plugins()
     try:
         from hermes_cli.main import main as hermes_main  # type: ignore[import]
@@ -120,7 +141,6 @@ def _delegate_to_hermes(argv: list[str]) -> int:
         print(f"sopify: cannot launch runtime ({exc})", file=sys.stderr)
         print("        Did `sopify install` finish?", file=sys.stderr)
         return 2
-    # Hermes main() reads sys.argv directly; splice our argv into it.
     sys.argv = [sys.argv[0]] + list(argv)
     rc = hermes_main()
     return rc if isinstance(rc, int) else 0
@@ -155,7 +175,8 @@ def _cmd_dashboard(argv: list[str]) -> int:
     hermes_args = ["dashboard"] + argv
     if "--tui" not in hermes_args and "--no-chat-pane" not in hermes_args:
         hermes_args.append("--tui")
-    return _delegate_to_hermes(hermes_args)
+    # Publish 9119 from microVM to host so the browser can reach it.
+    return _delegate_to_hermes(hermes_args, publish_ports=[9119])
 
 
 def _cmd_chat(argv: list[str]) -> int:

@@ -109,12 +109,27 @@ def _load_settings() -> dict:
         return {}
 
 
+def _check_sbx() -> Check:
+    """REQ-1.2.1 — preferred sandbox backend (Docker Sandboxes / microVM)."""
+    try:
+        import sys as _sys
+        from pathlib import Path as _Path
+        _sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
+        from plugins.sopify_sandbox import sbx_launcher  # type: ignore
+    except Exception as exc:
+        return Check("sbx", False, f"import failed: {exc}")
+    summary = sbx_launcher.status_summary()
+    ok = summary.startswith("sbx OK")
+    return Check("sbx", ok, summary)
+
+
 def run() -> DoctorReport:
     start = time.time()
     settings = _load_settings()
     report = DoctorReport(
         checks=[
-            _check_docker(),
+            _check_sbx(),               # preferred microVM backend
+            _check_docker(),            # fallback backend
             _check_sandbox_image(),
             _check_sandbox_network(),
             _check_auth(),
