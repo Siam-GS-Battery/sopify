@@ -65,14 +65,34 @@ def set_key(provider: str, key: str) -> None:
 
 def login_interactive() -> None:
     """REQ-2.2.3 — interactive setup."""
-    print("sopify login — API key setup")
-    provider = input("Provider [anthropic]: ").strip() or "anthropic"
-    key = getpass.getpass(f"{provider} API key: ").strip()
+    print()
+    print("┌────────────────────────────────────────────────────────────┐")
+    print("│  sopify login — store an API key in ~/.sopify/auth.json    │")
+    print("│                                                            │")
+    print("│  Common providers (press Enter for default 'anthropic'):   │")
+    print("│    anthropic   — get key at console.anthropic.com/settings │")
+    print("│    openrouter  — get key at openrouter.ai/keys             │")
+    print("│    novita      — get key at novita.ai/settings/key         │")
+    print("│    openai      — get key at platform.openai.com/api-keys   │")
+    print("│                                                            │")
+    print("│  Step 1 — pick a provider (just press Enter for anthropic) │")
+    print("│  Step 2 — paste the API key. The terminal HIDES typing for │")
+    print("│           security, so you won't see characters appear.    │")
+    print("│           Just paste + Enter.                              │")
+    print("└────────────────────────────────────────────────────────────┘")
+    print()
+
+    provider = input("[1/2] Provider [anthropic]: ").strip() or "anthropic"
+
+    print(f"\n[2/2] Paste {provider} API key and press Enter")
+    print("      (input is hidden — no characters will appear as you type)")
+    key = getpass.getpass(f"      {provider} key: ").strip()
     if not key:
-        print("(no key entered — aborting)")
+        print("\n✗ no key entered — aborting. Run `sopify login` again to retry.")
         return
     set_key(provider, key)
-    print(f"Saved {provider} key to {_auth_path()} (mode 0600)")
+    print(f"\n✓ Saved {provider} key to {_auth_path()} (mode 0600)")
+    print("   Run `sopify doctor` to verify, then `sopify dashboard` to use it.")
 
 
 def logout(provider: Optional[str] = None) -> None:
