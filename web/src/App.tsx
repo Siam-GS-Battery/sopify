@@ -499,11 +499,17 @@ export default function App() {
 
                 <img
                   src="/sopify-logo.png"
-                  alt="Sopify"
+                  alt="GS Battery"
                   className="block h-7 w-auto select-none"
                   style={{ imageRendering: "auto" }}
                   draggable={false}
                 />
+                <Typography
+                  className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem] text-midground"
+                  style={{ mixBlendMode: "plus-lighter" }}
+                >
+                  Sopify
+                </Typography>
               </div>
 
               <Button
