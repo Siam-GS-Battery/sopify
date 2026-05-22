@@ -411,3 +411,232 @@ kbd {
 :root[data-theme-name="sopify"] .text-midground {
   color: #03061E !important;
 }
+
+/* ====================================================================== */
+/* CSS_STYLE.md — Rhino-style component overrides for Sopify theme        */
+/* Targets only `[data-theme-name="sopify"]` so legacy Hermes themes      */
+/* keep their original look when picked.                                  */
+/* ====================================================================== */
+
+/* ---------- 1. Typography (CSS_STYLE.md §2.2) ---------- */
+/* Force Roboto everywhere on Sopify — even spots where @nous-research/ui */
+/* hardcodes its Mondwest/Collapse display fonts (sidebar brand, nav).    */
+:root[data-theme-name="sopify"],
+:root[data-theme-name="sopify"] * {
+  font-family: var(--font-sans);
+}
+:root[data-theme-name="sopify"] code,
+:root[data-theme-name="sopify"] pre,
+:root[data-theme-name="sopify"] kbd,
+:root[data-theme-name="sopify"] .font-mono,
+:root[data-theme-name="sopify"] .font-mono-ui,
+:root[data-theme-name="sopify"] [class*="tabular-nums"] {
+  font-family: var(--font-mono) !important;
+}
+
+/* Body baseline 13px (Rhino) */
+:root[data-theme-name="sopify"] body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg);
+}
+
+/* ---------- 2. Sidebar (CSS_STYLE.md §3) ---------- */
+:root[data-theme-name="sopify"] aside {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+/* Sidebar nav items — text uppercase 11px tracked 0.08em like Rhino */
+:root[data-theme-name="sopify"] aside nav a,
+:root[data-theme-name="sopify"] aside nav button {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  border-left: 3px solid transparent;
+  transition: background 120ms ease, color 120ms ease;
+}
+:root[data-theme-name="sopify"] aside nav a:hover,
+:root[data-theme-name="sopify"] aside nav button:hover {
+  background: var(--surface-alt);
+  color: var(--text-primary);
+}
+/* Active route — primary-8 bg + 3px left rail + primary text */
+:root[data-theme-name="sopify"] aside nav a.active,
+:root[data-theme-name="sopify"] aside nav a[aria-current="page"],
+:root[data-theme-name="sopify"] aside nav button[aria-current="page"],
+:root[data-theme-name="sopify"] aside nav [data-state="active"] {
+  background: var(--primary-8) !important;
+  color: var(--primary) !important;
+  border-left-color: var(--primary) !important;
+}
+
+/* Brand row */
+:root[data-theme-name="sopify"] aside [class*="font-bold"] {
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+
+/* Sidebar status strip + footer at bottom */
+:root[data-theme-name="sopify"] aside [class*="border-t"] {
+  border-top-color: var(--border) !important;
+}
+
+/* ---------- 3. Topbar (CSS_STYLE.md §3) ---------- */
+/* Plain border-bottom, no shadow */
+:root[data-theme-name="sopify"] header,
+:root[data-theme-name="sopify"] [role="banner"] {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: none;
+}
+
+/* ---------- 4. Card / Section (CSS_STYLE.md §4.3) ---------- */
+/* Any card-shaped container gets the SectionCard treatment:              */
+/*   surface bg, 1px border, rounded-2xl (16px), shadow tier 1            */
+:root[data-theme-name="sopify"] [class*="rounded-xl"],
+:root[data-theme-name="sopify"] [class*="rounded-2xl"],
+:root[data-theme-name="sopify"] [data-slot="card"],
+:root[data-theme-name="sopify"] section[class*="bg-"] {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+/* Headings inside cards: 18px / 600 (CSS_STYLE.md scale) */
+:root[data-theme-name="sopify"] [data-slot="card"] h1,
+:root[data-theme-name="sopify"] [data-slot="card"] h2,
+:root[data-theme-name="sopify"] [data-slot="card"] h3 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ---------- 5. Buttons (CSS_STYLE.md §4.1) ---------- */
+/* Primary CTAs */
+:root[data-theme-name="sopify"] button[data-variant="primary"],
+:root[data-theme-name="sopify"] button[class*="bg-primary"]:not([class*="opacity"]) {
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  transition: background 120ms ease;
+}
+:root[data-theme-name="sopify"] button[data-variant="primary"]:hover {
+  background: var(--primary-hover);
+}
+/* Secondary / ghost — light surface with hover */
+:root[data-theme-name="sopify"] button[data-variant="secondary"],
+:root[data-theme-name="sopify"] button[data-ghost="true"] {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: 6px;
+}
+:root[data-theme-name="sopify"] button[data-variant="secondary"]:hover,
+:root[data-theme-name="sopify"] button[data-ghost="true"]:hover {
+  background: var(--surface-alt);
+}
+/* Danger */
+:root[data-theme-name="sopify"] button[data-variant="danger"] {
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+}
+:root[data-theme-name="sopify"] button[data-variant="danger"]:hover {
+  background: var(--danger-8);
+}
+
+/* ---------- 6. Inputs (CSS_STYLE.md §4.2) ---------- */
+:root[data-theme-name="sopify"] input,
+:root[data-theme-name="sopify"] textarea,
+:root[data-theme-name="sopify"] select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+:root[data-theme-name="sopify"] input:focus-visible,
+:root[data-theme-name="sopify"] textarea:focus-visible,
+:root[data-theme-name="sopify"] select:focus-visible {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-30);
+}
+
+/* ---------- 7. Tables ---------- */
+:root[data-theme-name="sopify"] table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+:root[data-theme-name="sopify"] table th {
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+}
+:root[data-theme-name="sopify"] table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+:root[data-theme-name="sopify"] table tr:hover td {
+  background: var(--surface-alt);
+}
+
+/* ---------- 8. Status indicators ---------- */
+:root[data-theme-name="sopify"] [data-status="ok"],
+:root[data-theme-name="sopify"] [data-status="live"],
+:root[data-theme-name="sopify"] .status-live {
+  color: var(--success);
+}
+:root[data-theme-name="sopify"] [data-status="warn"],
+:root[data-theme-name="sopify"] .status-warn {
+  color: var(--warning);
+}
+:root[data-theme-name="sopify"] [data-status="error"],
+:root[data-theme-name="sopify"] [data-status="off"],
+:root[data-theme-name="sopify"] .status-off {
+  color: var(--danger);
+}
+
+/* ---------- 9. Badges / pills (CSS_STYLE.md §5.2) ---------- */
+/* Chip-shaped elements get 3px radius + uppercase */
+:root[data-theme-name="sopify"] [class*="rounded-chip"],
+:root[data-theme-name="sopify"] [data-slot="badge"] {
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 6px;
+}
+
+/* ---------- 10. Chat terminal background ---------- */
+/* The /chat tab embeds an xterm.js terminal — keep its native dark bg    */
+/* (terminals look weird on white) but blend the surrounding chrome.      */
+:root[data-theme-name="sopify"] .xterm,
+:root[data-theme-name="sopify"] [class*="xterm-viewport"] {
+  background: #1a1f2e !important;  /* slightly lighter than pure black */
+  border-radius: 8px;
+}
+
+/* ---------- 11. Scrollbar consistency ---------- */
+:root[data-theme-name="sopify"] *::-webkit-scrollbar-thumb {
+  background: var(--surface-alt);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+:root[data-theme-name="sopify"] *::-webkit-scrollbar-thumb:hover {
+  background: var(--neutral-400);
+  background-clip: padding-box;
+}
