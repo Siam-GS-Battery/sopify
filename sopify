@@ -45,8 +45,11 @@ def _print_help() -> None:
         "Host-only commands:\n"
         "  sopify install       one-shot setup (Docker pull + auth + config)\n"
         "  sopify doctor        health check (auth / sandbox / OTel)\n"
-        "  sopify login         interactive API-key setup\n"
+        "  sopify login         interactive API-key setup (writes auth.json)\n"
         "  sopify logout        zero-fill credentials\n"
+        "  sopify env list      show keys in ~/.hermes/.env (lengths only)\n"
+        "  sopify env set <p>   add an API key (e.g. anthropic, openrouter)\n"
+        "  sopify env unset <p> remove a key\n"
         "  sopify onboard       welcome flow for new users\n"
         "  sopify --version     show sopify and runtime versions\n"
         "\n"
@@ -219,6 +222,18 @@ def _cmd_logout(argv: list[str]) -> int:
     return 0
 
 
+def _cmd_env(argv: list[str]) -> int:
+    """sopify env — read/write credentials in ~/.hermes/.env directly.
+
+    Writes the canonical Hermes env file that the microVM mounts read-only,
+    so updates are picked up by the next sandbox boot without rebuilding.
+    """
+    _show_banner(subtitle="Env — manage ~/.hermes/.env credentials")
+    from importlib import import_module
+    env_cli = import_module("plugins.sopify_providers.env_cli")  # type: ignore[attr-defined]
+    return env_cli.main(argv)
+
+
 def _cmd_onboard(argv: list[str]) -> int:
     """sopify onboard — welcome + audit consent flow."""
     _show_banner(subtitle="Onboard — welcome + audit consent")
@@ -267,6 +282,8 @@ def main(argv: list[str]) -> int:
         return _cmd_login(argv[2:])
     if sub == "logout":
         return _cmd_logout(argv[2:])
+    if sub == "env":
+        return _cmd_env(argv[2:])
     if sub == "onboard":
         return _cmd_onboard(argv[2:])
     # Mode slash commands route to the Hermes runtime with sopify plugins
