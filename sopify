@@ -120,7 +120,10 @@ def _delegate_to_hermes(argv: list[str]) -> int:
         print(f"sopify: cannot launch runtime ({exc})", file=sys.stderr)
         print("        Did `sopify install` finish?", file=sys.stderr)
         return 2
-    return hermes_main(argv)
+    # Hermes main() reads sys.argv directly; splice our argv into it.
+    sys.argv = [sys.argv[0]] + list(argv)
+    rc = hermes_main()
+    return rc if isinstance(rc, int) else 0
 
 
 def _preload_sopify_plugins() -> None:
