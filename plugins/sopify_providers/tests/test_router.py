@@ -80,8 +80,14 @@ def test_auth_override_masks_claude_code(monkeypatch, tmp_path):
     ao = importlib.reload(importlib.import_module("plugins.sopify_providers.auth_override"))
     out = ao.apply()
     assert out == "sk-ant-api03-TEST"
+    # ANTHROPIC_TOKEN must be set to the API key — it's step 1 of Hermes'
+    # resolve_anthropic_token() priority, and since an API key isn't OAuth-
+    # shaped, the Claude-Code-preference helper short-circuits and the API
+    # key is returned directly. Env vars inherit to subprocesses (TUI PTY).
+    assert os.environ.get("ANTHROPIC_TOKEN") == "sk-ant-api03-TEST"
+    # Belt-and-braces for direct API_KEY callers.
     assert os.environ.get("ANTHROPIC_API_KEY") == "sk-ant-api03-TEST"
+    # OAuth-only env var must be cleared.
     assert os.environ.get("CLAUDE_CODE_OAUTH_TOKEN") is None
-    assert os.environ.get("ANTHROPIC_TOKEN") is None
     # The mask must make read_claude_code_credentials return None.
     assert fake_adapter.read_claude_code_credentials() is None

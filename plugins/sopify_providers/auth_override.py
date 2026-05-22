@@ -44,12 +44,19 @@ def apply() -> Optional[str]:
     if not key:
         return None
 
-    # Always set ANTHROPIC_API_KEY so step 4 of Hermes resolution succeeds.
+    # CRITICAL: set ANTHROPIC_TOKEN to the API key. resolve_anthropic_token
+    # checks ANTHROPIC_TOKEN FIRST (step 1 of 4). Its OAuth-preference helper
+    # `_prefer_refreshable_claude_code_token` only kicks in when the env
+    # token is OAuth-shaped — an API key (sk-ant-api*) short-circuits the
+    # helper, so step 1 returns our key directly. This works in both the
+    # dashboard process AND in subprocesses (the TUI chat PTY) because env
+    # vars inherit.
+    os.environ["ANTHROPIC_TOKEN"] = key
+    # Belt-and-braces for any caller that reads ANTHROPIC_API_KEY directly.
     os.environ["ANTHROPIC_API_KEY"] = key
 
-    # Don't let stale env vars trick Hermes into OAuth mode.
-    for var in ("ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
-        os.environ.pop(var, None)
+    # Drop the OAuth-only token (so step 2 doesn't pick up anything stale).
+    os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
 
     # Mask Claude Code credentials at the function level. This makes
     # _resolve_claude_code_token_from_credentials() return None for any
