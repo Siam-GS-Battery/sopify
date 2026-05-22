@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""sopify — entry-point shim.
+
+This is the *host-side* launcher (REQ-1.2.2). It does only three things:
+
+  1. Handle the install / doctor / version flow on the host (these can't
+     run inside the sandbox — they're what create it).
+  2. For every other subcommand, spawn the sopify-sandbox container and
+     forward stdin/stdout/stderr (REQ-1.2.1).
+  3. Clean up the container on exit (REQ-1.2.4).
+
+The actual sandbox spawn logic lives in plugins/sopify-sandbox/launcher.py;
+this shim only routes.
+"""
+from __future__ import annotations
+
+import os
+import sys
+
+# Make plugins importable without packaging tricks.
+ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, ROOT)
+
+
+def _show_banner(subtitle: str = "") -> None:
+    """Render the Sopify banner unless suppressed by $SOPIFY_NO_BANNER."""
+    try:
+        from importlib import import_module
+        banner = import_module("plugins.sopify_core.banner")
+        banner.render(subtitle=subtitle)
+    except Exception:
+        pass  # never block a command on banner failure
+
+
+def _print_help() -> None:
+    _show_banner()
+    print(
+        "sopify — AI agent with org governance\n"
+        "\n"
+        "Easy mode (recommended for non-engineers):\n"
+        "  sopify dashboard     open the web UI in your browser (chat there)\n"
+        "\n"
+        "Host-only commands:\n"
+        "  sopify install       one-shot setup (Docker pull + auth + config)\n"
+        "  sopify doctor        health check (auth / sandbox / OTel)\n"
+        "  sopify login         interactive API-key setup\n"
+        "  sopify logout        zero-fill credentials\n"
+        "  sopify onboard       welcome flow for new users\n"
+        "  sopify --version     show sopify and runtime versions\n"
+        "\n"
+        "Terminal modes (chat in the terminal — for power users):\n"
+        "  sopify chat          generic chat (runtime default)\n"
+        "  sopify /vibe         guided app builder\n"
+        "  sopify /living       persistent AI employee\n"
+        "  sopify /code-with-you  pair programming\n"
+        "\n"
+        "Sandbox flags:\n"
+        "  --no-sandbox         skip Docker sandbox (dev role only)\n"
+    )
+
+
+def _cmd_version() -> int:
+    # `--version` is meant to be machine-friendly; show banner only if TTY.
+    _show_banner()
+    from importlib import import_module
+    version = import_module("plugins.sopify_core.version")  # type: ignore[attr-defined]
+    print(version.full_version_string())
+    return 0
+
+
+def _cmd_install() -> int:
+    _show_banner(subtitle="Installing — Docker sandbox + network + config")
+    from importlib import import_module
+    install = import_module("plugins.sopify_core.install")  # type: ignore[attr-defined]
+    report = install.run()
+    print(install.format_report(report))
+    return 0 if report.ok else 1
+
+
+def _cmd_doctor() -> int:
+    _show_banner(subtitle="Doctor — auth / sandbox / OTel health check")
+    from importlib import import_module
+    doctor = import_module("plugins.sopify_core.doctor")  # type: ignore[attr-defined]
+    report = doctor.run()
+    print(doctor.format_report(report))
+    return 0 if report.ok else 1
+
+
+def _spawn_sandbox(argv: list[str]) -> int:
+    """REQ-1.2.1 / 1.2.2 — every other command runs inside the container."""
+    from importlib import import_module
+    try:
+        launcher = import_module("plugins.sopify_sandbox.launcher")  # type: ignore[attr-defined]
+    except ImportError:
+        print(
+            "sopify: sandbox plugin not installed — run `sopify install` first.",
+            file=sys.stderr,
+        )
+        return 2
+    return launcher.spawn(argv)
+
+
+def _delegate_to_hermes(argv: list[str]) -> int:
+    """Run the underlying Hermes CLI directly on the host (no sandbox).
+
+    Used for commands where the sandbox is overhead — the web dashboard
+    runs on the host because it serves HTTP to a browser also on the host.
+    Sopify plugins are pre-loaded so the dashboard sees the sopify modes,
+    guardrails, OTel events, etc.
+    """
+    # Ensure sopify plugins are picked up by Hermes' plugin manager.
+    # Hermes scans entry-points + ~/.hermes/plugins; we just import them so
+    # any side-effecting registry hooks run before main() starts.
+    _preload_sopify_plugins()
+    try:
+        from hermes_cli.main import main as hermes_main  # type: ignore[import]
+    except ImportError as exc:
+        print(f"sopify: cannot launch runtime ({exc})", file=sys.stderr)
+        print("        Did `sopify install` finish?", file=sys.stderr)
+        return 2
+    return hermes_main(argv)
+
+
+def _preload_sopify_plugins() -> None:
+    """Import every `plugins/sopify_*` package so hooks register on startup."""
+    import importlib
+    import pathlib
+
+    plugin_dir = pathlib.Path(ROOT) / "plugins"
+    for child in sorted(plugin_dir.iterdir()):
+        if child.is_dir() and child.name.startswith("sopify_"):
+            try:
+                importlib.import_module(f"plugins.{child.name}")
+            except Exception as exc:
+                print(f"sopify: plugin {child.name} failed to load: {exc}",
+                      file=sys.stderr)
+
+
+def _cmd_dashboard(argv: list[str]) -> int:
+    """sopify dashboard — open the web UI in a browser.
+
+    The dashboard is the recommended UX for non-engineers: it gives a
+    chat pane (when `--tui` is enabled, which we default to ON for Sopify),
+    config editor, session browser, and skill/tool inspector — all in
+    the browser, no terminal commands needed.
+    """
+    _show_banner(subtitle="Dashboard — opening browser UI")
+    # Auto-enable the in-browser Chat tab so the user can talk to Sopify
+    # immediately. They can still pass --no-chat-pane explicitly.
+    hermes_args = ["dashboard"] + argv
+    if "--tui" not in hermes_args and "--no-chat-pane" not in hermes_args:
+        hermes_args.append("--tui")
+    return _delegate_to_hermes(hermes_args)
+
+
+def _cmd_chat(argv: list[str]) -> int:
+    """sopify chat — open the Sopify TUI in the current terminal."""
+    _show_banner(subtitle="Chat — terminal UI")
+    return _delegate_to_hermes(argv or [])
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) <= 1 or argv[1] in ("-h", "--help"):
+        _print_help()
+        return 0
+    if argv[1] in ("-V", "--version", "version"):
+        return _cmd_version()
+    sub = argv[1]
+    if sub == "install":
+        return _cmd_install()
+    if sub == "doctor":
+        return _cmd_doctor()
+    if sub == "dashboard":
+        return _cmd_dashboard(argv[2:])
+    if sub == "chat":
+        return _cmd_chat(argv[2:])
+    # Everything else routes through the sandbox.
+    return _spawn_sandbox(argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,0 +1,99 @@
+"""Auth file management.
+
+REQ-2.2.1 — ~/.sopify/auth.json at file mode 0600.
+REQ-2.2.2 — ANTHROPIC_API_KEY env var overrides auth.json.
+REQ-2.2.3 — `sopify login` (interactive).
+REQ-2.2.4 — `sopify logout` (zero-fill before unlink).
+REQ-11.1  — file permission 0600 enforced on write.
+REQ-11.2  — never log the key (redaction lives in sopify-otel).
+"""
+from __future__ import annotations
+
+import getpass
+import json
+import os
+from pathlib import Path
+from typing import Dict, Optional
+
+
+def _auth_path() -> Path:
+    home = os.environ.get("SOPIFY_HOME") or os.path.expanduser("~/.sopify")
+    return Path(home) / "auth.json"
+
+
+def load() -> Dict[str, str]:
+    """Return {provider: api_key}. Env var ANTHROPIC_API_KEY overrides."""
+    p = _auth_path()
+    data: Dict[str, str] = {}
+    if p.exists():
+        try:
+            data = json.loads(p.read_text())
+        except Exception:
+            data = {}
+    if os.environ.get("ANTHROPIC_API_KEY"):  # REQ-2.2.2
+        data["anthropic"] = os.environ["ANTHROPIC_API_KEY"]
+    return data
+
+
+def get(provider: str) -> Optional[str]:
+    return load().get(provider)
+
+
+def _write_atomic(data: Dict[str, str]) -> None:
+    p = _auth_path()
+    p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2))
+    tmp.chmod(0o600)  # REQ-2.2.1 / REQ-11.1
+    tmp.replace(p)
+
+
+def set_key(provider: str, key: str) -> None:
+    data = load()
+    data[provider] = key
+    _write_atomic(data)
+
+
+def login_interactive() -> None:
+    """REQ-2.2.3 — interactive setup."""
+    print("sopify login — API key setup")
+    provider = input("Provider [anthropic]: ").strip() or "anthropic"
+    key = getpass.getpass(f"{provider} API key: ").strip()
+    if not key:
+        print("(no key entered — aborting)")
+        return
+    set_key(provider, key)
+    print(f"Saved {provider} key to {_auth_path()} (mode 0600)")
+
+
+def logout(provider: Optional[str] = None) -> None:
+    """REQ-2.2.4 — zero-fill before delete."""
+    p = _auth_path()
+    if not p.exists():
+        return
+    data = load()
+    if provider:
+        data.pop(provider, None)
+        # Zero-fill the file first then overwrite with new content.
+        try:
+            with open(p, "r+b") as f:
+                size = p.stat().st_size
+                f.write(b"\x00" * size)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            pass
+        if data:
+            _write_atomic(data)
+        else:
+            p.unlink()
+    else:
+        try:
+            with open(p, "r+b") as f:
+                size = p.stat().st_size
+                f.write(b"\x00" * size)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            pass
+        p.unlink()

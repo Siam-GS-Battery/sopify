@@ -1,194 +1,197 @@
-<p align="center">
-  <img src="assets/banner.png" alt="Hermes Agent" width="100%">
-</p>
-
-# Hermes Agent ☤
+# Sopify ☤
 
 <p align="center">
-  <a href="https://hermes-agent.nousresearch.com/docs/"><img src="https://img.shields.io/badge/Docs-hermes--agent.nousresearch.com-FFD700?style=for-the-badge" alt="Documentation"></a>
-  <a href="https://discord.gg/NousResearch"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
-  <a href="https://github.com/NousResearch/hermes-agent/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License: MIT"></a>
-  <a href="https://nousresearch.com"><img src="https://img.shields.io/badge/Built%20by-Nous%20Research-blueviolet?style=for-the-badge" alt="Built by Nous Research"></a>
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/Lang-中文-red?style=for-the-badge" alt="中文"></a>
+  <img src="https://img.shields.io/badge/Status-Phase%201-67E8F9?style=for-the-badge" alt="Status: Phase 1">
+  <img src="https://img.shields.io/badge/Org-GS%20Battery-22D3EE?style=for-the-badge" alt="GS Battery">
+  <img src="https://img.shields.io/badge/License-MIT-06B6D4?style=for-the-badge" alt="License: MIT">
+  <a href="DESIGN_ARCHITECTURE.md"><img src="https://img.shields.io/badge/Spec-DESIGN__ARCHITECTURE-0891B2?style=for-the-badge" alt="Spec"></a>
 </p>
 
-**The self-improving AI agent built by [Nous Research](https://nousresearch.com).** It's the only agent with a built-in learning loop — it creates skills from experience, improves them during use, nudges itself to persist knowledge, searches its own past conversations, and builds a deepening model of who you are across sessions. Run it on a $5 VPS, a GPU cluster, or serverless infrastructure that costs nearly nothing when idle. It's not tied to your laptop — talk to it from Telegram while it works on a cloud VM.
-
-Use any model you want — [Nous Portal](https://portal.nousresearch.com), [OpenRouter](https://openrouter.ai) (200+ models), [NovitaAI](https://novita.ai) (AI-native cloud for Model API, Agent Sandbox, and GPU Cloud), [NVIDIA NIM](https://build.nvidia.com) (Nemotron), [Xiaomi MiMo](https://platform.xiaomimimo.com), [z.ai/GLM](https://z.ai), [Kimi/Moonshot](https://platform.moonshot.ai), [MiniMax](https://www.minimax.io), [Hugging Face](https://huggingface.co), OpenAI, or your own endpoint. Switch with `hermes model` — no code changes, no lock-in.
-
-<table>
-<tr><td><b>A real terminal interface</b></td><td>Full TUI with multiline editing, slash-command autocomplete, conversation history, interrupt-and-redirect, and streaming tool output.</td></tr>
-<tr><td><b>Lives where you do</b></td><td>Telegram, Discord, Slack, WhatsApp, Signal, and CLI — all from a single gateway process. Voice memo transcription, cross-platform conversation continuity.</td></tr>
-<tr><td><b>A closed learning loop</b></td><td>Agent-curated memory with periodic nudges. Autonomous skill creation after complex tasks. Skills self-improve during use. FTS5 session search with LLM summarization for cross-session recall. <a href="https://github.com/plastic-labs/honcho">Honcho</a> dialectic user modeling. Compatible with the <a href="https://agentskills.io">agentskills.io</a> open standard.</td></tr>
-<tr><td><b>Scheduled automations</b></td><td>Built-in cron scheduler with delivery to any platform. Daily reports, nightly backups, weekly audits — all in natural language, running unattended.</td></tr>
-<tr><td><b>Delegates and parallelizes</b></td><td>Spawn isolated subagents for parallel workstreams. Write Python scripts that call tools via RPC, collapsing multi-step pipelines into zero-context-cost turns.</td></tr>
-<tr><td><b>Runs anywhere, not just your laptop</b></td><td>Seven terminal backends — local, Docker, SSH, Singularity, Modal, Daytona, and Vercel Sandbox. Daytona and Modal offer serverless persistence — your agent's environment hibernates when idle and wakes on demand, costing nearly nothing between sessions. Run it on a $5 VPS or a GPU cluster.</td></tr>
-<tr><td><b>Research-ready</b></td><td>Batch trajectory generation, trajectory compression for training the next generation of tool-calling models.</td></tr>
-</table>
+> **Sopify ≠ a new product.**
+> Sopify = an open-source AI agent + a Docker sandbox (embedded) + 3 working
+> modes + org governance. The base runtime is the upstream fork we maintain
+> in this repo; the Sopify layer lives entirely under `plugins/sopify_*/`
+> and never modifies the runtime core (REQ-0.3).
 
 ---
 
-## Quick Install
+## What problem does Sopify solve?
 
-### Linux, macOS, WSL2, Termux
+GS Battery needed an AI coding assistant that:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
-```
-
-### Windows (native, PowerShell) — Early Beta
-
-> **Heads up:** Native Windows support is **early beta**. It installs and runs, but hasn't been road-tested as broadly as our Linux/macOS/WSL2 paths. Please [file issues](https://github.com/NousResearch/hermes-agent/issues) when you hit rough edges. For the most battle-tested Windows setup today, run the Linux/macOS one-liner above inside **WSL2**.
-
-Run this in PowerShell:
-
-```powershell
-iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)
-```
-
-The installer handles everything: uv, Python 3.11, Node.js, ripgrep, ffmpeg, **and a portable Git Bash** (MinGit, unpacked to `%LOCALAPPDATA%\hermes\git` — no admin required, completely isolated from any system Git install).  Hermes uses this bundled Git Bash to run shell commands.
-
-If you already have Git installed, the installer detects it and uses that instead.  Otherwise a ~45MB MinGit download is all you need — it won't touch or interfere with any system Git.
-
-> **Android / Termux:** The tested manual path is documented in the [Termux guide](https://hermes-agent.nousresearch.com/docs/getting-started/termux). On Termux, Hermes installs a curated `.[termux]` extra because the full `.[all]` extra currently pulls Android-incompatible voice dependencies.
->
-> **Windows:** Native Windows is supported as an **early beta** — the PowerShell one-liner above installs everything, but expect rough edges and please file issues when you hit them. If you'd rather use WSL2 (our most battle-tested Windows path), the Linux command works there too. Native Windows install lives under `%LOCALAPPDATA%\hermes`; WSL2 installs under `~/.hermes` as on Linux.  The only Hermes feature that currently needs WSL2 specifically is the browser-based dashboard chat pane (it uses a POSIX PTY — classic CLI and gateway both run natively).
-
-After installation:
-
-```bash
-source ~/.bashrc    # reload shell (or: source ~/.zshrc)
-hermes              # start chatting!
-```
+| Concern | How Sopify handles it |
+|---|---|
+| **Safety** — non-engineers must not be able to run `rm -rf /`, drop databases, force-push to main | Hard-deny pattern list at the tool-call layer; non-overridable, even for `dev` role (REQ-6.1.4) |
+| **Audit** — IT needs evidence of every AI action: who, what, when, how much | OpenTelemetry pipeline with 5 typed events streaming to Grafana Alloy → Loki/Prometheus (REQ-7) |
+| **Isolation** — AI must not touch host files / network outside what's authorized | Every command runs inside a `sopify-sandbox` Docker container with egress whitelist (REQ-1) |
+| **Cost** — token spend must be controllable per mode, per user | Per-mode daily budgets + provider cascade with 1-hour blacklist on quota/auth failure (REQ-2, REQ-9.3) |
+| **Mode-fit** — different users have different needs: builder vs. employee vs. engineer | Three modes: `/vibe` (guided app builder), `/living` (24/7 employee), `/code-with-you` (pair programming) |
+| **Governance** — IT must be able to push settings, set roles, override providers | IT-managed `settings.json` at 0444 + `sopify admin` subcommands + live mtime polling (REQ-9) |
 
 ---
 
-## Getting Started
+## Quick start
 
 ```bash
-hermes              # Interactive CLI — start a conversation
-hermes model        # Choose your LLM provider and model
-hermes tools        # Configure which tools are enabled
-hermes config set   # Set individual config values
-hermes gateway      # Start the messaging gateway (Telegram, Discord, etc.)
-hermes setup        # Run the full setup wizard (configures everything at once)
-hermes claw migrate # Migrate from OpenClaw (if coming from OpenClaw)
-hermes update       # Update to the latest version
-hermes doctor       # Diagnose any issues
+git clone <internal-git-url>/sopify-harness.git
+cd sopify-harness
+
+./sopify install       # Docker pull + sopify-net + default policy
+./sopify login         # interactive API key
+./sopify onboard       # consent flow
+./sopify doctor        # 5-check health report
+
+./sopify /vibe         # try guided app builder
 ```
 
-📖 **[Full documentation →](https://hermes-agent.nousresearch.com/docs/)**
-
-## CLI vs Messaging Quick Reference
-
-Hermes has two entry points: start the terminal UI with `hermes`, or run the gateway and talk to it from Telegram, Discord, Slack, WhatsApp, Signal, or Email. Once you're in a conversation, many slash commands are shared across both interfaces.
-
-| Action | CLI | Messaging platforms |
-|---------|-----|---------------------|
-| Start chatting | `hermes` | Run `hermes gateway setup` + `hermes gateway start`, then send the bot a message |
-| Start fresh conversation | `/new` or `/reset` | `/new` or `/reset` |
-| Change model | `/model [provider:model]` | `/model [provider:model]` |
-| Set a personality | `/personality [name]` | `/personality [name]` |
-| Retry or undo the last turn | `/retry`, `/undo` | `/retry`, `/undo` |
-| Compress context / check usage | `/compress`, `/usage`, `/insights [--days N]` | `/compress`, `/usage`, `/insights [days]` |
-| Browse skills | `/skills` or `/<skill-name>` | `/<skill-name>` |
-| Interrupt current work | `Ctrl+C` or send a new message | `/stop` or send a new message |
-| Platform-specific status | `/platforms` | `/status`, `/sethome` |
-
-For the full command lists, see the [CLI guide](https://hermes-agent.nousresearch.com/docs/user-guide/cli) and the [Messaging Gateway guide](https://hermes-agent.nousresearch.com/docs/user-guide/messaging).
+Full manual: [`docs/sopify/INSTALL.md`](docs/sopify/INSTALL.md)
 
 ---
 
-## Documentation
+## Three modes
 
-All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/)**:
+| Mode              | For                | Defaults                                                           |
+|-------------------|--------------------|--------------------------------------------------------------------|
+| `/vibe`           | Non-engineers building internal apps     | Structured intake → 2-3 approaches → IT handoff (200k tokens/day) |
+| `/living`         | A department's 24/7 AI employee          | Persistent session, strict deny-list, sequential tools (300k/day) |
+| `/code-with-you`  | Engineers who want explain-then-execute  | Confirm every tool call, sequential only, lower budget (50k/day)  |
 
-| Section | What's Covered |
-|---------|---------------|
-| [Quickstart](https://hermes-agent.nousresearch.com/docs/getting-started/quickstart) | Install → setup → first conversation in 2 minutes |
-| [CLI Usage](https://hermes-agent.nousresearch.com/docs/user-guide/cli) | Commands, keybindings, personalities, sessions |
-| [Configuration](https://hermes-agent.nousresearch.com/docs/user-guide/configuration) | Config file, providers, models, all options |
-| [Messaging Gateway](https://hermes-agent.nousresearch.com/docs/user-guide/messaging) | Telegram, Discord, Slack, WhatsApp, Signal, Home Assistant |
-| [Security](https://hermes-agent.nousresearch.com/docs/user-guide/security) | Command approval, DM pairing, container isolation |
-| [Tools & Toolsets](https://hermes-agent.nousresearch.com/docs/user-guide/features/tools) | 40+ tools, toolset system, terminal backends |
-| [Skills System](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills) | Procedural memory, Skills Hub, creating skills |
-| [Memory](https://hermes-agent.nousresearch.com/docs/user-guide/features/memory) | Persistent memory, user profiles, best practices |
-| [MCP Integration](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) | Connect any MCP server for extended capabilities |
-| [Cron Scheduling](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron) | Scheduled tasks with platform delivery |
-| [Context Files](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files) | Project context that shapes every conversation |
-| [Architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) | Project structure, agent loop, key classes |
-| [Contributing](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | Development setup, PR process, code style |
-| [CLI Reference](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) | All commands and flags |
-| [Environment Variables](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | Complete env var reference |
+Switch with the slash command from anywhere: `/vibe`, `/living`, `/code-with-you`.
 
 ---
 
-## Migrating from OpenClaw
+## Architecture in one diagram
 
-If you're coming from OpenClaw, Hermes can automatically import your settings, memories, skills, and API keys.
-
-**During first-time setup:** The setup wizard (`hermes setup`) automatically detects `~/.openclaw` and offers to migrate before configuration begins.
-
-**Anytime after install:**
-
-```bash
-hermes claw migrate              # Interactive migration (full preset)
-hermes claw migrate --dry-run    # Preview what would be migrated
-hermes claw migrate --preset user-data   # Migrate without secrets
-hermes claw migrate --overwrite  # Overwrite existing conflicts
+```
+                           Host (user laptop)
+                                    │
+                            sopify (launcher)
+                                    │ docker run sopify-sandbox:latest
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      sopify-sandbox container                         │
+│                                                                       │
+│   /workspace (rw)   /sopify-auth (ro)   /sopify-config (ro)           │
+│   /sopify-sessions (rw)                                               │
+│                                                                       │
+│  ┌────────────────────────────────────────────────────────────┐      │
+│  │             Sopify runtime (upstream fork)                  │      │
+│  │                                                              │      │
+│  │  + sopify-core        REQ-0   bootstrap, version, doctor    │      │
+│  │  + sopify-providers   REQ-2   ProviderRouter cascade        │      │
+│  │  + sopify-guardrails  REQ-6   HARD_DENY / SOFT_DENY + roles │      │
+│  │  + sopify-otel        REQ-7   5-event audit pipeline        │      │
+│  │  + sopify-skills      REQ-8   company-sop / mode personas   │      │
+│  │  + sopify-modes       REQ-3/4/5  /living, /vibe, /code-…    │      │
+│  │  + sopify-management  REQ-9   managed settings, onboard     │      │
+│  │  + sopify-tui         REQ-10  TUI overlay (mode/quota chip) │      │
+│  └────────────────────────────────────────────────────────────┘      │
+│                                                                       │
+│   network: bridge "sopify-net" (egress filtered per policy.json)      │
+└──────────────────────────────────────────────────────────────────────┘
+                                    │
+                ▼                   ▼                   ▼
+       api.anthropic.com   otel-collector (gRPC)   user-approved domains
 ```
 
-What gets imported:
-- **SOUL.md** — persona file
-- **Memories** — MEMORY.md and USER.md entries
-- **Skills** — user-created skills → `~/.hermes/skills/openclaw-imports/`
-- **Command allowlist** — approval patterns
-- **Messaging settings** — platform configs, allowed users, working directory
-- **API keys** — allowlisted secrets (Telegram, OpenRouter, OpenAI, Anthropic, ElevenLabs)
-- **TTS assets** — workspace audio files
-- **Workspace instructions** — AGENTS.md (with `--workspace-target`)
-
-See `hermes claw migrate --help` for all options, or use the `openclaw-migration` skill for an interactive agent-guided migration with dry-run previews.
+Full architecture map: [`SOPIFY_ARCH.md`](SOPIFY_ARCH.md)
 
 ---
 
-## Contributing
+## Plugin layout (REQ-0.3)
 
-We welcome contributions! See the [Contributing Guide](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) for development setup, code style, and PR process.
+All Sopify code lives under `plugins/sopify_*/`. The upstream runtime core
+(`hermes_cli/`, `agent/`, `tools/`, `hermes_state.py`, …) is **read-only** —
+we only register hooks. This is what lets us pull security patches from
+upstream within 7 days (REQ-11.6).
 
-Quick start for contributors — clone and go with `setup-hermes.sh`:
-
-```bash
-git clone https://github.com/NousResearch/hermes-agent.git
-cd hermes-agent
-./setup-hermes.sh     # installs uv, creates venv, installs .[all], symlinks ~/.local/bin/hermes
-./hermes              # auto-detects the venv, no need to `source` first
+```
+plugins/
+├── sopify_core/         REQ-0   foundation, version, doctor, install
+├── sopify_sandbox/      REQ-1   Docker sandbox launcher + network policy
+├── sopify_providers/    REQ-2   ProviderRouter (cascade + blacklist)
+├── sopify_guardrails/   REQ-6   HARD_DENY / SOFT_DENY + role gating
+├── sopify_otel/         REQ-7   5-event OTel pipeline
+├── sopify_skills/       REQ-8   org skill bundles (loader)
+├── sopify_modes/        REQ-3/4/5  /living, /vibe, /code-with-you
+├── sopify_management/   REQ-9   managed settings + onboard
+└── sopify_tui/          REQ-10  TUI overlay (mode badge, quota, dialogs)
 ```
 
-Manual path (equivalent to the above):
+Each plugin ships with:
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv .venv --python 3.11
-source .venv/bin/activate
-uv pip install -e ".[all,dev]"
-scripts/run_tests.sh
-```
+- `plugin.yaml` — manifest (name, version, hooks, REQ traceability)
+- `README.md` — per-plugin internals + checkbox mapping
+- `tests/` — runnable with `uv run pytest`
 
 ---
 
-## Community
+## Verification
 
-- 💬 [Discord](https://discord.gg/NousResearch)
-- 📚 [Skills Hub](https://agentskills.io)
-- 🐛 [Issues](https://github.com/NousResearch/hermes-agent/issues)
-- 🔌 [computer-use-linux](https://github.com/avifenesh/computer-use-linux) — Linux desktop-control MCP server for Hermes and other MCP hosts, with AT-SPI accessibility trees, Wayland/X11 input, screenshots, and compositor window targeting.
-- 🔌 [HermesClaw](https://github.com/AaronWong1999/hermesclaw) — Community WeChat bridge: Run Hermes Agent and OpenClaw on the same WeChat account.
+```bash
+SOPIFY_HOME=/tmp/sopify-test \
+  uv run --with pytest --with pytest-xdist --with pytest-timeout \
+  python -m pytest plugins/sopify_*/tests -n0 -o addopts=
+```
+
+Expected: **50 passed in ~1 second.**
+
+| Plugin               | Tests | Covers                                                  |
+|----------------------|-------|---------------------------------------------------------|
+| sopify_core          | 4     | paths / version / doctor < 3s / install idempotent      |
+| sopify_sandbox       | 5     | default whitelist / subdomain / Allow-always persist    |
+| sopify_providers     | 5     | cascade / blacklist 1h / expiry / managed override      |
+| sopify_guardrails    | 8     | Gate P5 all paths (hard / soft / dev confirm)           |
+| sopify_otel          | 6     | gating / truncation / redaction / overflow drop         |
+| sopify_skills        | 6     | discovery / phase-gate / mode mapping / override        |
+| sopify_modes         | 7     | profiles / intake / fingerprint / step-gate             |
+| sopify_management    | 5     | defaults / 0444 enforce / broadcast / quota warn        |
+| sopify_tui           | 4     | dialog choices / Thai UTF-8 / safe default              |
+
+---
+
+## Source-of-truth documents
+
+| File | Purpose |
+|------|---------|
+| [`DESIGN_ARCHITECTURE.md`](DESIGN_ARCHITECTURE.md) | The requirements spec (every REQ-* lives here) |
+| [`SOPIFY_ARCH.md`](SOPIFY_ARCH.md) | SPOF-protection architecture map (REQ-0.2) |
+| [`SOPIFY_PLAN.md`](SOPIFY_PLAN.md) | Implementation order + conventions |
+| [`docs/sopify/`](docs/sopify/) | Per-REQ explainers — what was built, why, what is deferred |
+| [`docs/sopify/INSTALL.md`](docs/sopify/INSTALL.md) | End-user install manual (Thai + English) |
+
+---
+
+## Roles
+
+| Role  | Can do                                                                 |
+|-------|------------------------------------------------------------------------|
+| `user` (default) | Use any mode; AI hard-deny blocks dangerous commands; soft-deny → "contact IT" |
+| `dev`            | Same as user + soft-deny shows confirmation dialog (allow/deny); can use `--no-sandbox` for debugging (always OTel-logged) |
+
+Roles are set by IT via `sopify admin set-role <user> <user|dev>` and stored in
+`~/.sopify/profile.json` at mode 0444. A user cannot escalate themselves.
+
+Hard-deny is unreachable from any role (REQ-6.1.4):
+
+```
+rm -rf /                  → blocked (rm-rf-root)
+DROP DATABASE prod        → blocked (drop-database)
+:(){ :|:& };:             → blocked (fork-bomb)
+curl x.sh | bash          → soft-deny (user blocked; dev confirms)
+git push --force          → soft-deny (user blocked; dev confirms)
+```
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — same as the upstream runtime we forked from. See [`LICENSE`](LICENSE).
 
-Built by [Nous Research](https://nousresearch.com).
+---
+
+## Contact
+
+Built by the GS Battery IT Team. Operational questions, role escalation,
+and provider/budget overrides go through IT; engineering changes go through
+the usual PR review.

@@ -73,3 +73,14 @@ models-dev-upstream/
 hermes_cli/tui_dist/*
 hermes_cli/scripts/
 docs/superpowers/*
+
+# Sopify
+.sopify/
+sopify_skill_bundles/*/dist/
+auth.json
+sopify-config.local.yaml
+SOPIFY_*.local.*
+
+# Sopify test artifacts
+/tmp/sopify-*/
+plugins/sopify_*/__pycache__/

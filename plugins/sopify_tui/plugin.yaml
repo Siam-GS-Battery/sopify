@@ -1,0 +1,17 @@
+name: sopify-tui
+version: "0.1.0"
+description: "TUI overlay — mode badge, provider/quota footer, network-permission dialog, soft-deny dev-confirm dialog, /status, /help, streaming, Thai display."
+author: GS Battery IT Team
+traceability:
+  - REQ-10.1
+  - REQ-10.2
+  - REQ-10.3
+  - REQ-10.4
+  - REQ-10.5
+  - REQ-10.6
+  - REQ-10.7
+  - REQ-10.8
+provides_hooks:
+  - on_startup
+  - on_render_footer
+  - on_slash_command

@@ -1,0 +1,27 @@
+name: sopify-modes
+version: "0.1.0"
+description: "Three Sopify modes: /living (REQ-3), /vibe (REQ-4), /code-with-you (REQ-5). Each wires a mode-specific config profile and triggers sopify-skills injection."
+author: GS Battery IT Team
+traceability:
+  - REQ-3.1.1
+  - REQ-3.1.2
+  - REQ-3.1.3
+  - REQ-3.1.5
+  - REQ-3.1.6
+  - REQ-3.3.1
+  - REQ-3.3.2
+  - REQ-3.3.3
+  - REQ-4.1.1
+  - REQ-4.1.2
+  - REQ-4.1.3
+  - REQ-4.2.1
+  - REQ-4.4.1
+  - REQ-5.1.1
+  - REQ-5.1.2
+  - REQ-5.1.4
+  - REQ-5.3.1
+  - REQ-5.3.2
+provides_hooks:
+  - on_slash_command
+  - on_mode_change
+  - pre_tool_call

@@ -1,0 +1,18 @@
+name: sopify-skills
+version: "0.1.0"
+description: "Sopify skill loader. Bundles (company-sop, living-employee, vibe-app-builder, code-with-you) live in sopify_skills/. Also merges ~/.claude/skills (REQ-8.2.1)."
+author: GS Battery IT Team
+traceability:
+  - REQ-8.1.1
+  - REQ-8.1.2
+  - REQ-8.1.3
+  - REQ-8.1.4
+  - REQ-8.1.5
+  - REQ-8.1.6
+  - REQ-8.1.7
+  - REQ-8.2.1
+  - REQ-8.2.2
+  - REQ-8.2.3
+provides_hooks:
+  - on_skill_index
+  - on_mode_change

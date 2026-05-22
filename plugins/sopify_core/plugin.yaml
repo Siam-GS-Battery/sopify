@@ -1,0 +1,13 @@
+name: sopify-core
+version: "0.1.0"
+description: "Sopify foundation — paths, version, doctor, install. Loaded first by every other sopify-* plugin."
+author: GS Battery IT Team
+traceability:
+  - REQ-0.1
+  - REQ-0.2
+  - REQ-0.5
+  - REQ-0.6
+  - REQ-0.7
+  - REQ-0.8
+provides_hooks:
+  - on_startup
