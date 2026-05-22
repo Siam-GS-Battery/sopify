@@ -94,14 +94,52 @@ def _sandbox_name_for_cwd() -> str:
     return f"{SANDBOX_PREFIX}-{h}"
 
 
+def _sandbox_exists(name: str) -> bool:
+    try:
+        r = subprocess.run(
+            [SBX_BINARY, "ls"], capture_output=True, text=True, timeout=3,
+        )
+        return r.returncode == 0 and any(
+            line.split()[0] == name for line in r.stdout.splitlines()[1:] if line.strip()
+        )
+    except Exception:
+        return False
+
+
+def _ensure_sandbox(name: str, workspaces: List[str]) -> int:
+    """Create the sandbox if it doesn't exist. Returns rc."""
+    if _sandbox_exists(name):
+        return 0
+    # `sbx create shell <ws1> <ws2:ro> --name X --kit /path/to/kit`
+    argv = [SBX_BINARY, "create", "shell", *workspaces, "--name", name]
+    kit = _kit_path()
+    if kit.exists():
+        argv.extend(["--kit", str(kit)])
+    rc = subprocess.call(argv)
+    return rc
+
+
+def _publish_port(name: str, host_port: int, sbx_port: int) -> int:
+    """Publish a port. Returns rc (0 = ok, non-zero may mean already published)."""
+    return subprocess.call(
+        [SBX_BINARY, "ports", name, "--publish", f"{host_port}:{sbx_port}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
 def spawn(argv: List[str], *, with_kit: bool = True,
           publish_ports: Optional[List[int]] = None) -> int:
     """Run argv inside an sbx microVM. Returns the exit code.
 
+    Flow:
+      1. `sbx create shell <cwd> <app>:ro --name X --kit <kit>`  (if missing)
+      2. `sbx ports X --publish 9119:9119`                       (per port)
+      3. `sbx run X -- bash -c "/usr/local/bin/sopify <argv>"`   (attach)
+
     Args:
       argv: command + args to run inside the sandbox (e.g. ["chat"]).
-      with_kit: apply the sopify kit on first launch.
-      publish_ports: port numbers to publish from sandbox to host (for dashboard).
+      with_kit: apply the Sopify kit at creation time.
+      publish_ports: ports to publish from microVM to host (e.g. [9119]).
     """
     if not is_available():
         print("sopify: `sbx` not installed. Install via:", file=sys.stderr)
@@ -120,44 +158,27 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     app_root = str(_sopify_app_root())
     sandbox = _sandbox_name_for_cwd()
 
-    # The kit applies on `sbx kit add` for an existing sandbox; for a
-    # fresh one we ship it via the spec at first run by using `sbx create`
-    # plus `sbx kit add` then `sbx exec`. Simpler path: use `sbx run shell`
-    # with workspace mounts + post-create kit add.
+    # 1. Ensure sandbox exists (idempotent — re-uses same microVM per cwd).
+    workspaces = [cwd, f"{app_root}:ro"]
+    rc = _ensure_sandbox(sandbox, workspaces)
+    if rc != 0 and not _sandbox_exists(sandbox):
+        print(f"sopify: sbx create failed (rc={rc})", file=sys.stderr)
+        return rc
 
-    # Build the inner command: invoke /usr/local/bin/sopify (set up by the
-    # kit's startup script) with the user's argv.
-    inner_cmd = "/usr/local/bin/sopify " + " ".join(_shellquote(a) for a in argv)
-
-    # Mount the sopify-app dir read-only as /workspaces/sopify-app so the
-    # startup script can find it. The user's cwd becomes the primary
-    # workspace (/workspaces/<basename>).
-    sbx_argv = [
-        SBX_BINARY, "run",
-        "shell",
-        cwd,
-        f"{app_root}:ro",
-    ]
-
-    # Port publishing for the dashboard.
+    # 2. Publish each requested port.
     if publish_ports:
         for p in publish_ports:
-            sbx_argv.extend(["--publish", f"{p}:{p}"])
+            _publish_port(sandbox, p, p)  # ignore rc — already-published returns non-zero
 
-    # Sandbox name so subsequent runs reuse the same microVM.
-    sbx_argv.extend(["--name", sandbox])
-
-    # Pass the actual command via `--` separator.
-    sbx_argv.extend(["--", "-c", inner_cmd])
+    # 3. Build inner command — invoke sopify wrapper (set up by kit's startup
+    #    script as /usr/local/bin/sopify) with the user's argv.
+    inner_cmd = "/usr/local/bin/sopify " + " ".join(_shellquote(a) for a in argv)
 
     try:
-        # Apply the kit once (idempotent: sbx skips if already applied).
-        if with_kit and _kit_path().exists():
-            subprocess.run(
-                [SBX_BINARY, "kit", "add", sandbox, str(_kit_path())],
-                capture_output=True, text=True, timeout=30,
-            )  # ignore errors — first-time sandboxes don't exist yet
-        return subprocess.call(sbx_argv)
+        return subprocess.call([
+            SBX_BINARY, "run", sandbox,
+            "--", "bash", "-lc", inner_cmd,
+        ])
     except KeyboardInterrupt:
         return 130
 
