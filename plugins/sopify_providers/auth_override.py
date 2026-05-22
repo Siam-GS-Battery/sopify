@@ -35,12 +35,77 @@ from . import auth
 logger = logging.getLogger(__name__)
 
 
+_SENTINEL_KEYS = frozenset({"", "proxy-managed", "managed", "placeholder"})
+
+
+def _looks_like_sentinel(value: str) -> bool:
+    """True if `value` is missing or a known sandbox-injected placeholder.
+
+    sbx (Docker Sandboxes) substitutes well-known secret env names like
+    ANTHROPIC_API_KEY with the sentinel "proxy-managed" inside the microVM,
+    even when the host shell did not export the variable. Real Anthropic
+    keys are ~108 chars and start with `sk-ant-`; anything noticeably
+    shorter is either the sentinel or unusable.
+    """
+    if value in _SENTINEL_KEYS:
+        return True
+    if len(value) < 20:
+        return True
+    return False
+
+
+def _load_key_from_hermes_env() -> Optional[str]:
+    """Read ANTHROPIC_API_KEY (or ANTHROPIC_TOKEN) from ~/.hermes/.env.
+
+    Inside the microVM, ~/.hermes/.env is a symlink to the host's :ro
+    mount and contains the user's real key — but `sopify env set` writes
+    only there (not ~/.sopify/auth.json), and sbx clobbers the env var
+    with a sentinel. So when the env var is unusable, fall back here.
+    """
+    import re
+    from pathlib import Path
+
+    env_path = Path.home() / ".hermes" / ".env"
+    if not env_path.exists():
+        return None
+    try:
+        text = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN"):
+        m = re.search(rf"^\s*{var}\s*=\s*(.+?)\s*$", text, flags=re.MULTILINE)
+        if m:
+            v = m.group(1).strip().strip('"').strip("'")
+            if v and not _looks_like_sentinel(v):
+                return v
+    return None
+
+
 def apply() -> Optional[str]:
     """Promote ~/.sopify/auth.json key to ANTHROPIC_API_KEY and mask
     Claude Code OAuth credentials. Returns the resolved key or None.
     """
     creds = auth.load()
     key = creds.get("anthropic")
+
+    # Fallback when ~/.sopify/auth.json is empty (the typical case inside
+    # the microVM, where `sopify env set` writes to ~/.hermes/.env only):
+    # if the current ANTHROPIC_API_KEY env var looks like a sandbox-
+    # injected sentinel ("proxy-managed"), pull the real key from
+    # ~/.hermes/.env instead. Without this, slash_worker subprocesses
+    # authenticate to Anthropic with "proxy-managed" and get 401.
+    if not key:
+        env_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if _looks_like_sentinel(env_key):
+            file_key = _load_key_from_hermes_env()
+            if file_key:
+                logger.info(
+                    "sopify-providers: env ANTHROPIC_API_KEY=%r is a sandbox "
+                    "sentinel; using key from ~/.hermes/.env instead",
+                    env_key or "<unset>",
+                )
+                key = file_key
+
     if not key:
         return None
 
