@@ -110,7 +110,11 @@ clone_or_update() {
 # ---------- python env ----------
 setup_venv() {
     say "Setting up Python venv via uv sync..."
-    (cd "$INSTALL_DIR" && uv sync --quiet 2>&1 | tail -3) || \
+    # `web` is required for `sopify dashboard` (fastapi + uvicorn).
+    # `cli` adds the interactive TUI menu helper.
+    # `anthropic` makes the default provider importable on first chat.
+    (cd "$INSTALL_DIR" && uv sync --quiet \
+        --extra web --extra cli --extra anthropic 2>&1 | tail -3) || \
         warn "uv sync had warnings — continuing anyway"
     ok "venv ready at $INSTALL_DIR/.venv"
 }
