@@ -32,19 +32,38 @@ GS Battery needed an AI coding assistant that:
 
 ## Quick start
 
+### One-line install (recommended)
+
 ```bash
-git clone <internal-git-url>/sopify-harness.git
-cd sopify-harness
+curl -fsSL https://raw.githubusercontent.com/Siam-GS-Battery/sopify/main/scripts/sopify-install.sh | bash
+```
 
-./sopify install       # Docker pull + sopify-net + default policy
-./sopify login         # interactive API key
-./sopify onboard       # consent flow
-./sopify doctor        # 5-check health report
+The installer checks Docker, installs `uv` if needed, clones into
+`~/.sopify-app/`, symlinks `sopify` into `~/.local/bin`, and runs
+`sopify install` to set up the sandbox.
 
-./sopify /vibe         # try guided app builder
+### Then chat from your browser
+
+```bash
+sopify login           # add an API key (Anthropic, OpenRouter, etc.)
+sopify dashboard       # opens http://127.0.0.1:9119 in your browser
+```
+
+The dashboard gives you a chat pane, mode switcher, session history,
+config editor, and skill/tool inspector — all in the browser, **no
+terminal commands needed after this point.**
+
+### Terminal mode (power users)
+
+```bash
+sopify chat                   # generic chat (uses runtime defaults)
+sopify /vibe                  # guided app builder
+sopify /living                # 24/7 AI employee
+sopify /code-with-you         # pair programming
 ```
 
 Full manual: [`docs/sopify/INSTALL.md`](docs/sopify/INSTALL.md)
+Tutorial:    [`docs/sopify/TUTORIAL.md`](docs/sopify/TUTORIAL.md)
 
 ---
 
