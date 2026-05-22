@@ -75,7 +75,7 @@ check_uv() {
         ok "uv already installed: $(uv --version)"
         return 0
     fi
-    say "Installing uv (Python package manager)…"
+    say "Installing uv (Python package manager)..."
     curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1
     # uv installer drops binary in ~/.local/bin or ~/.cargo/bin.
     export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
@@ -95,13 +95,13 @@ check_git() {
 # ---------- clone / update ----------
 clone_or_update() {
     if [ -d "$INSTALL_DIR/.git" ]; then
-        say "Updating existing checkout at $INSTALL_DIR…"
+        say "Updating existing checkout at $INSTALL_DIR..."
         git -C "$INSTALL_DIR" fetch --quiet origin "$BRANCH"
         git -C "$INSTALL_DIR" checkout --quiet "$BRANCH"
         git -C "$INSTALL_DIR" reset --hard --quiet "origin/$BRANCH"
         ok "Updated to $(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
     else
-        say "Cloning Sopify from $REPO ($BRANCH) → $INSTALL_DIR…"
+        say "Cloning Sopify from $REPO ($BRANCH) → $INSTALL_DIR..."
         git clone --quiet --depth 1 --branch "$BRANCH" "$REPO" "$INSTALL_DIR"
         ok "Cloned to $INSTALL_DIR"
     fi
@@ -109,7 +109,7 @@ clone_or_update() {
 
 # ---------- python env ----------
 setup_venv() {
-    say "Setting up Python venv via uv sync…"
+    say "Setting up Python venv via uv sync..."
     (cd "$INSTALL_DIR" && uv sync --quiet 2>&1 | tail -3) || \
         warn "uv sync had warnings — continuing anyway"
     ok "venv ready at $INSTALL_DIR/.venv"
@@ -134,7 +134,7 @@ symlink_sopify() {
 
 # ---------- run sandbox install ----------
 run_sopify_install() {
-    say "Running \`sopify install\` to set up the sandbox…"
+    say "Running \`sopify install\` to set up the sandbox..."
     if "$INSTALL_DIR/sopify" install; then
         ok "Sandbox ready."
     else
@@ -161,7 +161,7 @@ EOF
 
 # ---------- main ----------
 banner
-say "Checking prerequisites…"
+say "Checking prerequisites..."
 check_docker
 check_uv
 check_git
