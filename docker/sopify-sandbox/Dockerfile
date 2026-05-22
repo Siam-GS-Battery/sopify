@@ -1,9 +1,11 @@
-# sopify-sandbox image. Built/pulled by `sopify install` (REQ-1.1.1).
-# Target: < 2 GB on disk (REQ-12 non-functional table).
+# sopify-sandbox image — Linux runtime for sbx --template + standalone Docker.
 #
-# Layered intentionally so the Sopify runtime layer is the only one that
-# changes when we cut a new Sopify release. The sandbox image is the
-# environment Sopify *lives in* — not a feature it triggers.
+# Built by `sopify install` (REQ-1.1.1) or manually:
+#   docker build -t sopify-sandbox:latest docker/sopify-sandbox/
+#
+# When sbx is installed, sopify_sandbox.sbx_launcher passes this image
+# via `sbx create --template sopify-sandbox:latest` so the microVM has
+# Sopify + Hermes + all Python deps pre-installed and ready to run.
 
 # Pin uv for reproducible builds.
 FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie AS uv_source
@@ -15,43 +17,62 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     UV_LINK_MODE=copy \
-    UV_PROJECT_ENVIRONMENT=/opt/sopify/.venv
+    UV_PROJECT_ENVIRONMENT=/opt/sopify/.venv \
+    PATH=/opt/sopify/.venv/bin:/usr/local/bin:/usr/bin:/bin
 
-# System deps: tini (orphan reap), git/curl/ripgrep (used by tools),
-# python3 + venv (Hermes runtime), nodejs (web build + MCP stdio).
+# System deps. tini reaps zombies; bash is what sbx exec calls.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        tini ca-certificates curl git nodejs npm python3 python3-venv \
-        python3-dev build-essential ripgrep ffmpeg \
+        tini ca-certificates curl git bash \
+        nodejs npm \
+        python3 python3-venv python3-dev build-essential \
+        ripgrep ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy uv from its dedicated image so we don't reinstall it.
+# Copy uv from its dedicated image.
 COPY --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 
-# REQ-11.4 — container runs as a non-root user (UID 10001).
+# REQ-11.4 — non-root user.
 RUN useradd --uid 10001 --create-home --home-dir /home/sopify --shell /bin/bash sopify
 
-# Copy the Sopify runtime + sopify plugins into the image.
+# Copy entire repo into image. Layered after deps so source edits don't
+# bust the apt cache layer.
 WORKDIR /opt/sopify
 COPY --chown=sopify:sopify . /opt/sopify
 
-# Install Python deps INSIDE the image so the Hermes runtime is importable
-# at container start. Without this, sopify-runtime.py would crash on
-# `from hermes_cli import main`.
-RUN chown -R sopify:sopify /opt/sopify
+# Build the Linux-native venv with all extras Sopify needs:
+#   web         → fastapi + uvicorn (dashboard)
+#   cli         → interactive TUI menus
+#   anthropic   → primary provider SDK
+#   pty         → ptyprocess for the /chat tab
+# This is the slowest step in the build (~60-90s) but happens once at
+# image-build time, not at every microVM cold start.
 USER sopify
-RUN uv sync --frozen --no-dev || uv sync --no-dev || true
+RUN uv sync --frozen \
+        --extra web --extra cli --extra anthropic --extra pty \
+    || uv sync --extra web --extra cli --extra anthropic --extra pty \
+    || true
 
-# Mountpoints declared up front so the container fails fast if the launcher
-# forgot a `-v` bind (REQ-1.2.5/6/7/8).
+# Wire the wrapper so `sopify ...` works inside the microVM regardless
+# of how sbx invokes commands.
 USER root
+RUN ln -sf /opt/sopify/sopify /usr/local/bin/sopify \
+    && chmod +x /opt/sopify/sopify
+
+# Pre-declare mountpoints so sbx's bind-mount lands at expected paths.
 RUN mkdir -p /workspace /sopify-auth /sopify-config /sopify-sessions \
     && chown -R sopify:sopify /workspace /sopify-sessions /opt/sopify
 
-# REQ-11.4 — final stage runs as non-root.
+# Smoke test inside the build so a broken venv breaks the build, not
+# the user's first dashboard launch.
 USER sopify
+RUN python3 -c "import sys; sys.path.insert(0, '/opt/sopify'); \
+                from plugins.sopify_core import version, paths, doctor; \
+                print('sopify build smoke:', version.full_version_string())"
 
-# Use the in-venv python so Hermes deps are resolvable.
-ENV PATH=/opt/sopify/.venv/bin:$PATH
+USER sopify
+WORKDIR /workspace
 
-ENTRYPOINT ["tini", "--", "/opt/sopify/docker/sopify-sandbox/entrypoint.sh"]
-CMD ["chat"]
+# sbx invokes commands via `sbx exec bash -c ...`. Default CMD is the
+# shell so `sbx run SANDBOX` without args just drops into bash.
+ENTRYPOINT ["tini", "--"]
+CMD ["bash"]

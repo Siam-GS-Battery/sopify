@@ -106,17 +106,38 @@ def _sandbox_exists(name: str) -> bool:
         return False
 
 
+SOPIFY_IMAGE = "sopify-sandbox:latest"
+
+
+def _image_exists() -> bool:
+    """True when the Linux sopify-sandbox image is available locally."""
+    try:
+        r = subprocess.run(
+            ["docker", "image", "inspect", SOPIFY_IMAGE],
+            capture_output=True, timeout=2,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
 def _ensure_sandbox(name: str, workspaces: List[str]) -> int:
-    """Create the sandbox if it doesn't exist. Returns rc."""
+    """Create the sandbox if it doesn't exist. Returns rc.
+
+    Uses the pre-built sopify-sandbox:latest image (--template) so the
+    microVM boots with all Sopify Python deps already installed for
+    Linux — no per-launch `uv sync` overhead and the host's macOS venv
+    is irrelevant inside the microVM.
+    """
     if _sandbox_exists(name):
         return 0
-    # `sbx create shell <ws1> <ws2:ro> --name X --kit /path/to/kit`
     argv = [SBX_BINARY, "create", "shell", *workspaces, "--name", name]
+    if _image_exists():
+        argv.extend(["--template", SOPIFY_IMAGE])
     kit = _kit_path()
     if kit.exists():
         argv.extend(["--kit", str(kit)])
-    rc = subprocess.call(argv)
-    return rc
+    return subprocess.call(argv)
 
 
 def _publish_port(name: str, host_port: int, sbx_port: int) -> int:

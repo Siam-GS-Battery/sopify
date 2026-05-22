@@ -67,28 +67,30 @@ def _ensure_image(report: InstallReport) -> None:
     if inspect.returncode == 0:
         report.steps.append(f"image {SANDBOX_IMAGE}: already present")
         return
-    pull = subprocess.run(
-        ["docker", "pull", SANDBOX_IMAGE], capture_output=True, text=True,
-    )
-    if pull.returncode != 0:
-        # Fallback: build locally from docker/sopify-sandbox/ if pull failed
-        # (this is the common path during early development).
-        report.steps.append(f"pull failed; attempting local build")
-        ctx = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        sandbox_ctx = os.path.join(ctx, "docker", "sopify-sandbox")
-        if os.path.isdir(sandbox_ctx):
-            build = subprocess.run(
-                ["docker", "build", "-t", SANDBOX_IMAGE, sandbox_ctx],
-                capture_output=True, text=True,
-            )
-            if build.returncode != 0:
-                report.errors.append(f"image build failed: {build.stderr[:200]}")
-                return
-            report.steps.append(f"image {SANDBOX_IMAGE}: built locally")
-            return
-        report.errors.append(f"image pull failed and no local context: {pull.stderr[:200]}")
+    # Skip pull — we ship the Dockerfile in-repo and want a deterministic
+    # Linux build using the user's current source. Build directly.
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    dockerfile = os.path.join(repo_root, "docker", "sopify-sandbox", "Dockerfile")
+    if not os.path.isfile(dockerfile):
+        report.errors.append(f"Dockerfile not found at {dockerfile}")
         return
-    report.steps.append(f"image {SANDBOX_IMAGE}: pulled")
+    report.steps.append(
+        f"building {SANDBOX_IMAGE} (Linux Python deps, ~2-5 min first time)..."
+    )
+    # The whole repo is the build context (Dockerfile does `COPY . /opt/sopify`).
+    # We use --quiet so steps stay readable in `sopify install` output; pipe
+    # stderr through tail on failure for diagnosis.
+    build = subprocess.run(
+        ["docker", "build", "-t", SANDBOX_IMAGE,
+         "-f", dockerfile, repo_root, "--quiet"],
+        capture_output=True, text=True,
+    )
+    if build.returncode != 0:
+        # Show last 12 lines of stderr so the user can see where it broke.
+        tail = "\n".join(build.stderr.splitlines()[-12:])
+        report.errors.append(f"image build failed:\n{tail}")
+        return
+    report.steps.append(f"image {SANDBOX_IMAGE}: built locally")
 
 
 def _ensure_network(report: InstallReport) -> None:
