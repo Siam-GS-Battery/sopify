@@ -1,93 +1,129 @@
 import type { ThemeColors } from './theme.js'
 
-const RICH_RE = /\[(?:bold\s+)?(?:dim\s+)?(#(?:[0-9a-fA-F]{3,8}))\]([\s\S]*?)(\[\/\])/g
+const RICH_RE = /\[(?:bold\s+)?(?:dim\s+)?(#(?:[0-9a-fA-F]{3,8}))\]([\s\S]*?)\[\/\]/g
 
-export function parseRichMarkup(markup: string): Line[] {
-  const lines: Line[] = []
+export type Segment = [string, string]
+export type Row = Segment[]
+
+export function parseRichMarkup(markup: string): Row[] {
+  const rows: Row[] = []
 
   for (const raw of markup.split('\n')) {
-    const trimmed = raw.trimEnd()
+    const line = raw.trimEnd()
 
-    if (!trimmed) {
-      lines.push(['', ' '])
+    if (!line) {
+      rows.push([['', ' ']])
 
       continue
     }
 
-    const matches = [...trimmed.matchAll(RICH_RE)]
+    const matches = [...line.matchAll(RICH_RE)]
 
     if (!matches.length) {
-      lines.push(['', trimmed])
+      rows.push([['', line]])
 
       continue
     }
 
+    const row: Row = []
     let cursor = 0
 
     for (const m of matches) {
-      const before = trimmed.slice(cursor, m.index)
+      const before = line.slice(cursor, m.index)
 
       if (before) {
-        lines.push(['', before])
+        row.push(['', before])
       }
 
-      lines.push([m[1]!, m[2]!])
+      row.push([m[1]!, m[2]!])
       cursor = m.index! + m[0].length
     }
 
-    if (cursor < trimmed.length) {
-      lines.push(['', trimmed.slice(cursor)])
+    if (cursor < line.length) {
+      row.push(['', line.slice(cursor)])
     }
+
+    rows.push(row)
   }
 
-  return lines
+  return rows
 }
 
-const LOGO_ART = [
-  '███████╗ ██████╗ ██████╗ ██╗███████╗██╗   ██╗',
-  '██╔════╝██╔═══██╗██╔══██╗██║██╔════╝╚██╗ ██╔╝',
-  '███████╗██║   ██║██████╔╝██║█████╗   ╚████╔╝ ',
-  '╚════██║██║   ██║██╔═══╝ ██║██╔══╝    ╚██╔╝  ',
-  '███████║╚██████╔╝██║     ██║██║        ██║   ',
-  '╚══════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝        ╚═╝   '
-]
+const HERMES_TEXT_LOGO = `[bold #67E8F9]      ___           ___           ___                 [/]
+[bold #67E8F9]     /\\  \\         /\\  \\         /\\  \\          ___   [/]
+[bold #22D3EE]    /::\\  \\       /::\\  \\       /::\\  \\        /\\  \\  [/]
+[bold #22D3EE]   /:/\\ \\  \\     /:/\\:\\  \\     /:/\\:\\  \\       \\:\\  \\ [/]
+[bold #06B6D4]  _\\:\\~\\ \\  \\   /:/  \\:\\  \\   /::\\~\\:\\  \\      /::\\__\\[/]
+[bold #06B6D4] /\\ \\:\\ \\ \\__\\ /:/__/ \\:\\__\\ /:/\\:\\ \\:\\__\\  __/:/\\/__/[/]
+[bold #0891B2] \\:\\ \\:\\ \\/__/ \\:\\  \\ /:/  / \\/__\\:\\/:/  / /\\/:/  /   [/]
+[bold #0891B2]  \\:\\ \\:\\__\\    \\:\\  /:/  /       \\::/  /  \\::/__/    [/]
+[bold #0E7490]   \\:\\/:/  /     \\:\\/:/  /         \\/__/    \\:\\__\\    [/]
+[bold #0E7490]    \\::/  /       \\::/  /                    \\/__/    [/]
+[bold #155E75]     \\/__/         \\/__/                              [/]
+[bold #67E8F9]      ___           ___     [/]
+[bold #22D3EE]     /\\  \\         |\\__\\    [/]
+[bold #22D3EE]    /::\\  \\        |:|  |   [/]
+[bold #06B6D4]   /:/\\:\\  \\       |:|  |   [/]
+[bold #06B6D4]  /::\\~\\:\\  \\      |:|__|__ [/]
+[bold #0891B2] /:/\\:\\ \\:\\__\\     /::::\\__\\[/]
+[bold #0891B2] \\/__\\:\\ \\/__/    /:/~~/~   [/]
+[bold #0E7490]      \\:\\__\\     /:/  /     [/]
+[bold #155E75]       \\/__/     \\/__/      [/]`
 
-const CADUCEUS_ART = [
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀⠀⢀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣇⠸⣿⣿⠇⣸⣿⣿⣷⣦⣄⡀⠀⠀⠀⠀⠀⠀',
-  '⠀⢀⣠⣴⣶⠿⠋⣩⡿⣿⡿⠻⣿⡇⢠⡄⢸⣿⠟⢿⣿⢿⣍⠙⠿⣶⣦⣄⡀⠀',
-  '⠀⠀⠉⠉⠁⠶⠟⠋⠀⠉⠀⢀⣈⣁⡈⢁⣈⣁⡀⠀⠉⠀⠙⠻⠶⠈⠉⠉⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⡿⠛⢁⡈⠛⢿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⣿⣦⣤⣈⠁⢠⣴⣿⠿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠻⢿⣿⣦⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢷⣦⣈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⠦⠈⠙⠿⣦⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣤⡈⠁⢤⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠑⢶⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠁⢰⡆⠈⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⠈⣡⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀',
-  '⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀'
-]
+const PIXEL_RHINO = `[#164E63]    ████            ████    [/]
+[#164E63]  ██[/][#22D3EE]████[/][#164E63]██        ██[/][#22D3EE]████[/][#164E63]██  [/]
+[#164E63]██[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]████████[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████████████████████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██████████[/][#0891B2]████[/][#67E8F9]██████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████████[/][#0891B2]████████[/][#67E8F9]████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██████[/][#0891B2]████████████[/][#67E8F9]██████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████[/][#164E63]██[/][#67E8F9]████████████[/][#164E63]██[/][#67E8F9]████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████████████████████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██[/][#F9A8D4]████[/][#67E8F9]████████████[/][#F9A8D4]████[/][#67E8F9]██[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██[/][#F9A8D4]████[/][#67E8F9]████████████[/][#F9A8D4]████[/][#67E8F9]██[/][#164E63]██[/]
+[#164E63]██[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#67E8F9]████████[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]██[/]
+[#164E63]  ████████        ████████  [/]
+[#164E63]    ████            ████    [/]`
 
-const LOGO_GRADIENT = [0, 0, 1, 1, 2, 2] as const
-const CADUC_GRADIENT = [2, 2, 1, 1, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 3] as const
+const DEFAULT_LOGO_ROWS = parseRichMarkup(HERMES_TEXT_LOGO)
+const DEFAULT_HERO_ROWS = parseRichMarkup(PIXEL_RHINO)
 
-const colorize = (art: string[], gradient: readonly number[], c: ThemeColors): Line[] => {
-  const p = [c.primary, c.accent, c.border, c.muted]
+export const LOGO_WIDTH = 56
+export const CADUCEUS_WIDTH = 28
 
-  return art.map((text, i) => [p[gradient[i]!] ?? c.muted, text])
+const rowWidth = (row: Row) => row.reduce((n, [, t]) => n + t.length, 0)
+
+// Recolor a default-themed art so it follows the current ThemeColors.
+const themed = (rows: Row[], c: ThemeColors): Row[] => {
+  const remap: Record<string, keyof ThemeColors> = {
+    '#67E8F9': 'primary',
+    '#22D3EE': 'primary',
+    '#06B6D4': 'accent',
+    '#0891B2': 'accent',
+    '#0E7490': 'border',
+    '#155E75': 'border',
+    '#164E63': 'muted',
+    '#F9A8D4': 'accent'
+  }
+
+  return rows.map(row =>
+    row.map(([color, text]) => {
+      if (!color) {
+        return [color, text] as Segment
+      }
+
+      const key = remap[color.toLowerCase()] ?? remap[color.toUpperCase()] ?? remap[color]
+      const themeColor = key ? c[key] : undefined
+
+      return [themeColor ?? color, text] as Segment
+    })
+  )
 }
 
-export const LOGO_WIDTH = 45
-export const CADUCEUS_WIDTH = 30
+export const logo = (c: ThemeColors, customLogo?: string): Row[] =>
+  customLogo ? parseRichMarkup(customLogo) : themed(DEFAULT_LOGO_ROWS, c)
 
-export const logo = (c: ThemeColors, customLogo?: string): Line[] =>
-  customLogo ? parseRichMarkup(customLogo) : colorize(LOGO_ART, LOGO_GRADIENT, c)
+export const caduceus = (c: ThemeColors, customHero?: string): Row[] =>
+  customHero ? parseRichMarkup(customHero) : themed(DEFAULT_HERO_ROWS, c)
 
-export const caduceus = (c: ThemeColors, customHero?: string): Line[] =>
-  customHero ? parseRichMarkup(customHero) : colorize(CADUCEUS_ART, CADUC_GRADIENT, c)
-
-export const artWidth = (lines: Line[]) => lines.reduce((m, [, t]) => Math.max(m, t.length), 0)
-
-type Line = [string, string]
+export const artWidth = (rows: Row[]) => rows.reduce((m, row) => Math.max(m, rowWidth(row)), 0)

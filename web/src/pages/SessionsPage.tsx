@@ -35,6 +35,7 @@ import { timeAgo } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { PlatformsCard } from "@/components/PlatformsCard";
 import { Toast } from "@/components/Toast";
+import { BrandHero } from "@/components/BrandHero";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { ListItem } from "@nous-research/ui/ui/components/list-item";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
@@ -781,15 +782,22 @@ export default function SessionsPage() {
       )}
 
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-          <Clock className="h-8 w-8 mb-3 opacity-40" />
-          <p className="text-sm font-medium">
-            {search ? t.sessions.noMatch : t.sessions.noSessions}
-          </p>
-          {!search && (
-            <p className="text-xs mt-1 text-muted-foreground/60">
-              {t.sessions.startConversation}
-            </p>
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          {search ? (
+            <>
+              <Clock className="h-8 w-8 mb-3 opacity-40" />
+              <p className="text-sm font-medium">{t.sessions.noMatch}</p>
+            </>
+          ) : (
+            <>
+              <BrandHero
+                tagline={t.sessions.startConversation}
+                className="mb-2"
+              />
+              <p className="text-sm font-medium mt-4">
+                {t.sessions.noSessions}
+              </p>
+            </>
           )}
         </div>
       ) : (

@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ANSI building blocks for conversation display
 # =========================================================================
 
-_GOLD = "\033[1;38;2;255;215;0m"  # True-color #FFD700 bold
+_GOLD = "\033[1;38;2;103;232;249m"  # True-color #67E8F9 bold (cyan)
 _BOLD = "\033[1m"
 _DIM = "\033[2m"
 _RST = "\033[0m"
@@ -92,23 +92,20 @@ HERMES_AGENT_LOGO = r"""[bold #67E8F9]      ___           ___           ___     
 
 
 
-HERMES_CADUCEUS = r'''[#67E8F9]       ,       ,[/]
-[#67E8F9]      /|    |\./'.[/]
-[#22D3EE]     | |  ,  \|| ,|[/]
-[#22D3EE]     \  \_(\.-""\//.  _[/]
-[#06B6D4]   .-'`""``"` _   ` `-.`"""--.._      _..----. __[/]
-[#06B6D4]   | '~`      o\                `"---"        `. `"-.==,[/]
-[#06B6D4]    \,.-;    `"`                                |`""`===`[/]
-[#0891B2]      (`            /                           |[/]
-[#0891B2]       `-----.____.;          \     |           ;[/]
-[#0891B2]                   \__         |    \          /[/]
-[#0E7490]                  .'         .'      \        ' `,[/]
-[#0E7490]                 /          /         '._        |[/]
-[#0E7490]                 |    '.---;`-.____.-'`\ `""`;   |[/]
-[#155E75]                 |     _\   \    '.     )   /    \[/]
-[#155E75]                 \-,--( /   /    _/   .'   |_ _ .-)[/]
-[#155E75]              jgs '----;)__;    (`.-. ;    `-:.;-'[/]
-[#155E75]                                 `""""`[/]'''
+HERMES_CADUCEUS = r'''[#164E63]    ████            ████    [/]
+[#164E63]  ██[/][#22D3EE]████[/][#164E63]██        ██[/][#22D3EE]████[/][#164E63]██  [/]
+[#164E63]██[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]████████[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████████████████████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██████████[/][#0891B2]████[/][#67E8F9]██████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████████[/][#0891B2]████████[/][#67E8F9]████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██████[/][#0891B2]████████████[/][#67E8F9]██████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████[/][#164E63]██[/][#67E8F9]████████████[/][#164E63]██[/][#67E8F9]████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]████████████████████████[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██[/][#F9A8D4]████[/][#67E8F9]████████████[/][#F9A8D4]████[/][#67E8F9]██[/][#164E63]██[/]
+[#164E63]██[/][#67E8F9]██[/][#F9A8D4]████[/][#67E8F9]████████████[/][#F9A8D4]████[/][#67E8F9]██[/][#164E63]██[/]
+[#164E63]██[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#67E8F9]████████[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]██[/]
+[#164E63]  ████████        ████████  [/]
+[#164E63]    ████            ████    [/]'''
 
 
 
@@ -512,10 +509,10 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     layout_table.add_column("right", justify="left")
 
     # Resolve skin colors once for the entire banner
-    accent = _skin_color("banner_accent", "#FFBF00")
-    dim = _skin_color("banner_dim", "#B8860B")
-    text = _skin_color("banner_text", "#FFF8DC")
-    session_color = _skin_color("session_border", "#8B8682")
+    accent = _skin_color("banner_accent", "#22D3EE")
+    dim = _skin_color("banner_dim", "#0E7490")
+    text = _skin_color("banner_text", "#E0F2FE")
+    session_color = _skin_color("session_border", "#155E75")
 
     # Use skin's custom caduceus art if provided
     try:
@@ -697,8 +694,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     right_content = "\n".join(right_lines)
     layout_table.add_row(left_content, right_content)
 
-    title_color = _skin_color("banner_title", "#FFD700")
-    border_color = _skin_color("banner_border", "#CD7F32")
+    title_color = _skin_color("banner_title", "#67E8F9")
+    border_color = _skin_color("banner_border", "#06B6D4")
     version_label = format_banner_version_label()
     release_info = get_latest_release_tag()
     if release_info:
