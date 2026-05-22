@@ -175,6 +175,20 @@ def _cmd_dashboard(argv: list[str]) -> int:
     hermes_args = ["dashboard"] + argv
     if "--tui" not in hermes_args and "--no-chat-pane" not in hermes_args:
         hermes_args.append("--tui")
+    # When running inside the sbx microVM, Hermes' default --host=127.0.0.1
+    # binds to the microVM's loopback, which sbx port-publishing can't
+    # reach from the host. Force 0.0.0.0 so the published 9119:9119 mapping
+    # actually serves the host browser. --insecure is required to allow
+    # non-localhost binding (safe here: only the host network sees this
+    # via the explicit sbx publish — there's no exposure to anyone else).
+    if os.environ.get("SOPIFY_IN_SANDBOX") == "1":
+        if "--host" not in hermes_args:
+            hermes_args.extend(["--host", "0.0.0.0"])
+        if "--insecure" not in hermes_args:
+            hermes_args.append("--insecure")
+        if "--no-open" not in hermes_args:
+            # No browser inside the microVM — the host launcher opens it.
+            hermes_args.append("--no-open")
     # Publish 9119 from microVM to host so the browser can reach it.
     return _delegate_to_hermes(hermes_args, publish_ports=[9119])
 

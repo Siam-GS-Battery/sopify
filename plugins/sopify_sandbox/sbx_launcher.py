@@ -129,6 +129,34 @@ def _remove_sandbox(name: str) -> None:
     )
 
 
+def _open_browser_when_ready(port: int, max_wait_seconds: int = 30) -> None:
+    """Open the host browser after FastAPI inside the microVM is reachable.
+
+    Sandbox publishes the port to the host immediately, but FastAPI takes
+    a few seconds to import deps + bind. Spin a daemon thread that polls
+    and opens the browser when the port answers. Falls back silently if
+    the wait expires or we're on a headless host.
+    """
+    import socket
+    import threading
+    import time
+    import webbrowser
+
+    def _wait_then_open():
+        url = f"http://127.0.0.1:{port}"
+        deadline = time.time() + max_wait_seconds
+        while time.time() < deadline:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                    webbrowser.open(url)
+                    return
+            except OSError:
+                time.sleep(0.5)
+
+    threading.Thread(target=_wait_then_open, name="sopify-open-browser",
+                     daemon=True).start()
+
+
 SOPIFY_IMAGE = "sopify-sandbox:latest"
 
 
@@ -218,6 +246,13 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     if publish_ports:
         for p in publish_ports:
             _publish_port(sandbox, p, p)  # ignore rc — already-published returns non-zero
+
+    # 2b. When launching the dashboard, open the host browser to the
+    #     published port after a short delay so FastAPI inside the microVM
+    #     has time to bind. The microVM is started with --no-open so the
+    #     browser-open responsibility lives here on the host.
+    if publish_ports and 9119 in publish_ports:
+        _open_browser_when_ready(9119)
 
     # 3. Build inner command — invoke sopify wrapper (set up by kit's startup
     #    script as /usr/local/bin/sopify) with the user's argv.
