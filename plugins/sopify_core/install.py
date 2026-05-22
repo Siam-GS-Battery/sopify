@@ -152,6 +152,7 @@ def run() -> InstallReport:
     _ensure_network(report)
     _write_default_policy(report)
     _activate_plugins(report)
+    _validate_sbx_kit(report)
     _emit_install_event(report)
     return report
 
@@ -166,6 +167,28 @@ def _activate_plugins(report: InstallReport) -> None:
         report.steps.append(f"plugins.enabled: {len(enabled)} entries")
     except Exception as exc:
         report.steps.append(f"plugins.enabled: skipped ({exc})")
+
+
+def _validate_sbx_kit(report: InstallReport) -> None:
+    """REQ-1.2.* — validate the Sopify kit so sbx microVMs apply our
+    network policy + env passthrough + startup commands at runtime."""
+    import shutil
+    if not shutil.which("sbx"):
+        report.steps.append("sbx: not installed (host fallback mode)")
+        return
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    kit_dir = os.path.join(repo_root, "infra", "sbx", "sopify-kit")
+    if not os.path.isfile(os.path.join(kit_dir, "spec.yaml")):
+        report.steps.append(f"sbx kit: missing at {kit_dir}")
+        return
+    rc = subprocess.call(
+        ["sbx", "kit", "validate", kit_dir],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if rc == 0:
+        report.steps.append("sbx kit: validated (17 allowed domains)")
+    else:
+        report.steps.append(f"sbx kit: validation failed (rc={rc})")
 
 
 def format_report(report: InstallReport) -> str:

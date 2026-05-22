@@ -92,6 +92,91 @@ check_git() {
     ok "git ready: $(git --version | cut -d' ' -f3)"
 }
 
+# ---------- Docker Sandboxes (sbx) — the microVM runtime ----------
+# REQ-1.2.1 — Sopify ships with its sandbox backend. The user should not
+# have to install sbx separately. We install it here and prompt for
+# `sbx login` so the first `sopify dashboard` invocation just works.
+install_sbx() {
+    if command -v sbx >/dev/null 2>&1; then
+        ok "sbx (Docker Sandboxes) already installed"
+        return 0
+    fi
+    say "Installing Docker Sandboxes (sbx) — Sopify's microVM backend..."
+    local os
+    os="$(uname -s)"
+    case "$os" in
+        Darwin)
+            if ! command -v brew >/dev/null 2>&1; then
+                warn "Homebrew not found. Install via https://brew.sh, then re-run."
+                warn "(Skipping sbx install — Sopify will fall back to host mode.)"
+                return 0
+            fi
+            brew install docker/tap/sbx 2>&1 | tail -3 || \
+                warn "sbx install failed — Sopify falls back to host mode"
+            ;;
+        Linux)
+            if command -v apt-get >/dev/null 2>&1; then
+                sudo apt-get update -qq
+                sudo apt-get install -y docker-sbx 2>&1 | tail -3 || \
+                    warn "apt-get install docker-sbx failed"
+                if command -v usermod >/dev/null 2>&1; then
+                    sudo usermod -aG kvm "$USER" 2>/dev/null || true
+                fi
+            else
+                warn "Non-Debian Linux detected. Install sbx manually:"
+                warn "  https://docs.docker.com/ai/sandboxes/get-started/"
+                return 0
+            fi
+            ;;
+        *)
+            warn "Unsupported OS '$os' — install sbx manually:"
+            warn "  https://docs.docker.com/ai/sandboxes/get-started/"
+            return 0
+            ;;
+    esac
+    if command -v sbx >/dev/null 2>&1; then
+        ok "sbx installed: $(sbx version 2>&1 | head -1)"
+    else
+        warn "sbx install did not surface a binary — Sopify will use host mode"
+    fi
+}
+
+login_sbx() {
+    if ! command -v sbx >/dev/null 2>&1; then
+        return 0
+    fi
+    # Detect existing login via the on-disk auth marker so we don't prompt twice.
+    local auth_dir="$HOME/Library/Application Support/com.docker.sandboxes/com.docker.sandboxes-auth/sandboxes-auth"
+    if [ -d "$auth_dir" ] && find "$auth_dir" -name 'metadata.json' -print -quit | grep -q .; then
+        ok "sbx already logged in"
+        return 0
+    fi
+    say "Signing in to Docker Sandboxes (browser will open)..."
+    if [ -t 0 ]; then
+        # Interactive — let sbx open the browser.
+        sbx login || warn "sbx login skipped/failed — run 'sbx login' later to enable microVM mode"
+    else
+        # Non-interactive (mass deploy) — defer to user.
+        warn "Non-interactive shell; run 'sbx login' on your first session to enable microVM mode"
+    fi
+}
+
+register_sopify_kit() {
+    if ! command -v sbx >/dev/null 2>&1; then
+        return 0
+    fi
+    local kit_dir="$INSTALL_DIR/infra/sbx/sopify-kit"
+    if [ ! -f "$kit_dir/spec.yaml" ]; then
+        warn "Sopify kit not found at $kit_dir — skipping kit validation"
+        return 0
+    fi
+    if sbx kit validate "$kit_dir" >/dev/null 2>&1; then
+        ok "Sopify kit validated (17 allowed domains + env passthrough)"
+    else
+        warn "sbx kit validate failed — microVM mode may still work but check $kit_dir"
+    fi
+}
+
 # ---------- clone / update ----------
 clone_or_update() {
     if [ -d "$INSTALL_DIR/.git" ]; then
@@ -202,10 +287,14 @@ say "Checking prerequisites..."
 check_docker
 check_uv
 check_git
+install_sbx
 echo
 clone_or_update
 setup_venv
 write_wrapper
+echo
+register_sopify_kit
+login_sbx
 echo
 run_sopify_install
 final_message

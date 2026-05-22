@@ -59,6 +59,21 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 Ok "git ready: $(git --version)"
 
+# Docker Sandboxes (sbx) — REQ-1.2.1 microVM backend
+if (-not (Get-Command sbx -ErrorAction SilentlyContinue)) {
+    Say "Installing Docker Sandboxes (sbx) — Sopify's microVM backend..."
+    try {
+        winget install -h Docker.sbx
+        $env:PATH = "$env:PATH;$env:LOCALAPPDATA\Microsoft\WinGet\Links"
+    } catch {
+        Warn "sbx install failed — Sopify will fall back to host mode. See:"
+        Warn "  https://docs.docker.com/ai/sandboxes/get-started/"
+    }
+}
+if (Get-Command sbx -ErrorAction SilentlyContinue) {
+    Ok "sbx ready"
+}
+
 # -------- clone / update --------
 if (Test-Path "$SOPIFY_INSTALL_DIR\.git") {
     Say "Updating existing checkout at $SOPIFY_INSTALL_DIR..."
@@ -101,6 +116,22 @@ if ($userPath -notlike "*$SOPIFY_BIN_DIR*") {
     Say "Adding $SOPIFY_BIN_DIR to user PATH..."
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$SOPIFY_BIN_DIR", "User")
     Warn "Open a NEW terminal so PATH picks up the new entry."
+}
+
+# -------- sbx kit register + login --------
+if (Get-Command sbx -ErrorAction SilentlyContinue) {
+    & sbx kit validate "$SOPIFY_INSTALL_DIR\infra\sbx\sopify-kit" 2>&1 | Out-Null
+    Ok "Sopify sbx kit validated"
+
+    # Probe login state via Windows auth dir (best-effort)
+    $authDir = "$env:LOCALAPPDATA\com.docker.sandboxes\com.docker.sandboxes-auth\sandboxes-auth"
+    $loggedIn = Test-Path "$authDir"
+    if (-not $loggedIn) {
+        Say "Signing in to Docker Sandboxes (browser will open)..."
+        try { & sbx login } catch { Warn "sbx login skipped — run 'sbx login' later" }
+    } else {
+        Ok "sbx already logged in"
+    }
 }
 
 # -------- sandbox bootstrap --------
