@@ -552,20 +552,20 @@ export function normalizeThemeForAnsiLightTerminal(
 
 const DEFAULT_LIGHT_MODE = detectLightMode()
 
-// Sopify-specific override: when running in the browser-embedded PTY
-// (HERMES_TUI_INLINE=1 set by hermes_cli/web_server.py for the dashboard
-// /chat tab), force the Sopify light-blue theme so the terminal matches
-// the rest of the dashboard chrome. The native CLI TUI keeps its
-// auto-detect behaviour (dark on dark, light on light).
-const _SOPIFY_INLINE = (process.env.HERMES_TUI_INLINE === '1')
-  || (process.env.SOPIFY_TUI_THEME === 'sopify-light')
+// Sopify always uses the SOPIFY_LIGHT theme (blue palette on white bg).
+// The legacy gold DARK_THEME / LIGHT_THEME stay in the codebase for the
+// upstream Hermes CLI users, but the inline dashboard TUI we ship to
+// non-engineers should always look like the rest of the dashboard.
+// Opt-out by setting SOPIFY_TUI_THEME=hermes-gold to fall back to upstream
+// auto-detect (DARK_THEME on dark terminals, LIGHT_THEME on light ones).
+const _OPT_OUT = process.env.SOPIFY_TUI_THEME === 'hermes-gold'
 
 export const DEFAULT_THEME: Theme = normalizeThemeForAnsiLightTerminal(
-  _SOPIFY_INLINE
-    ? SOPIFY_LIGHT_THEME
-    : (DEFAULT_LIGHT_MODE ? LIGHT_THEME : DARK_THEME),
+  _OPT_OUT
+    ? (DEFAULT_LIGHT_MODE ? LIGHT_THEME : DARK_THEME)
+    : SOPIFY_LIGHT_THEME,
   process.env,
-  _SOPIFY_INLINE || DEFAULT_LIGHT_MODE
+  !_OPT_OUT || DEFAULT_LIGHT_MODE
 )
 
 // ── Skin → Theme ─────────────────────────────────────────────────────

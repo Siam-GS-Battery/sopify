@@ -113,8 +113,13 @@ const TranscriptPane = memo(function TranscriptPane({
               {row.msg.kind === 'intro' ? (
                 <Box flexDirection="column" paddingTop={1}>
                   <Banner t={ui.theme} />
-
-                  {row.msg.info && <SessionPanel info={row.msg.info} sid={ui.sid} t={ui.theme} />}
+                  {/* SessionPanel intentionally hidden in Sopify inline TUI —
+                      it duplicates info already in the dashboard sidebar
+                      (model, session, tools, skills). Set
+                      SOPIFY_SHOW_SESSION_PANEL=1 to bring it back. */}
+                  {row.msg.info && process.env.SOPIFY_SHOW_SESSION_PANEL === '1' && (
+                    <SessionPanel info={row.msg.info} sid={ui.sid} t={ui.theme} />
+                  )}
                 </Box>
               ) : row.msg.kind === 'panel' && row.msg.panelData ? (
                 <Panel sections={row.msg.panelData.sections} t={ui.theme} title={row.msg.panelData.title} />
