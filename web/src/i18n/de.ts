@@ -55,7 +55,7 @@ export const de: Translations = {
     closeNavigation: "Navigation schließen",
     closeModelTools: "Modell und Werkzeuge schließen",
     footer: {
-      org: "Nous Research",
+      org: "GS Battery",
     },
     activeSessionsLabel: "Aktive Sitzungen:",
     gatewayStatusLabel: "Gateway-Status:",
@@ -120,8 +120,8 @@ export const de: Translations = {
     starting: "Startet",
     startedInBackground: "Im Hintergrund gestartet — siehe Protokolle für den Fortschritt",
     stopped: "Gestoppt",
-    updateHermes: "Hermes aktualisieren",
-    updatingHermes: "Hermes wird aktualisiert…",
+    updateHermes: "Sopify aktualisieren",
+    updatingHermes: "Sopify wird aktualisiert…",
     waitingForOutput: "Warte auf Ausgabe…",
   },
 

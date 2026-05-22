@@ -23,7 +23,7 @@ export function SidebarFooter() {
       </Typography>
 
       <a
-        href="https://nousresearch.com"
+        href="https://github.com/Siam-GS-Battery/sopify"
         target="_blank"
         rel="noopener noreferrer"
         className={cn(
@@ -33,7 +33,7 @@ export function SidebarFooter() {
         )}
         style={{ mixBlendMode: "plus-lighter" }}
       >
-        {t.app.footer.org}
+        GS BATTERY
       </a>
     </div>
   );

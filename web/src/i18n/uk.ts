@@ -55,7 +55,7 @@ export const uk: Translations = {
     closeNavigation: "Закрити навігацію",
     closeModelTools: "Закрити модель та інструменти",
     footer: {
-      org: "Nous Research",
+      org: "GS Battery",
     },
     activeSessionsLabel: "Активні сесії:",
     gatewayStatusLabel: "Стан шлюзу:",
@@ -120,8 +120,8 @@ export const uk: Translations = {
     starting: "Запускається",
     startedInBackground: "Запущено у фоні — перевірте журнали для прогресу",
     stopped: "Зупинено",
-    updateHermes: "Оновити Hermes",
-    updatingHermes: "Оновлення Hermes…",
+    updateHermes: "Оновити Sopify",
+    updatingHermes: "Оновлення Sopify…",
     waitingForOutput: "Очікування виводу…",
   },
 

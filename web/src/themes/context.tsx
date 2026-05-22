@@ -28,7 +28,39 @@ import { api } from "@/lib/api";
 
 /** LocalStorage key — pre-applied before the React tree mounts to avoid
  *  a visible flash of the default palette on theme-overridden installs. */
-const STORAGE_KEY = "hermes-dashboard-theme";
+const STORAGE_KEY = "sopify-dashboard-theme";
+
+/** Legacy keys we one-time migrate from. Once a user has the Sopify key set,
+ *  we never read the old keys again. */
+const LEGACY_STORAGE_KEYS = ["hermes-dashboard-theme"];
+
+/** Built-in Hermes themes that should be auto-migrated to "sopify".
+ *  Users who explicitly picked one of these via the old picker are still
+ *  free to switch back via the new picker — we only override on first
+ *  load after upgrade. */
+const HERMES_LEGACY_THEMES = new Set([
+  "default", "default-large", "midnight", "ember",
+  "mono", "cyberpunk", "rose",
+]);
+
+function readPersistedTheme(): string {
+  if (typeof window === "undefined") return "sopify";
+  // Sopify key wins if present.
+  const current = window.localStorage.getItem(STORAGE_KEY);
+  if (current) return current;
+  // Migration: pick up any legacy hermes-dashboard-theme value.
+  for (const legacy of LEGACY_STORAGE_KEYS) {
+    const v = window.localStorage.getItem(legacy);
+    if (v) {
+      // Auto-promote legacy Hermes built-ins to sopify; preserve user themes.
+      const promoted = HERMES_LEGACY_THEMES.has(v) ? "sopify" : v;
+      window.localStorage.setItem(STORAGE_KEY, promoted);
+      window.localStorage.removeItem(legacy);
+      return promoted;
+    }
+  }
+  return "sopify";
+}
 
 /** Tracks fontUrls we've already injected so multiple theme switches don't
  *  pile up <link> tags. Keyed by URL. */
@@ -308,10 +340,7 @@ function applyTheme(theme: DashboardTheme) {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   /** Name of the currently active theme (built-in id or user YAML name). */
-  const [themeName, setThemeName] = useState<string>(() => {
-    if (typeof window === "undefined") return "default";
-    return window.localStorage.getItem(STORAGE_KEY) ?? "default";
-  });
+  const [themeName, setThemeName] = useState<string>(() => readPersistedTheme());
 
   /** All selectable themes (shown in the picker). Starts with just the
    *  built-ins; the API call below merges in user themes. */
