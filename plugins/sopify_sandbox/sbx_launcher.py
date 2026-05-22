@@ -174,10 +174,15 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     #    script as /usr/local/bin/sopify) with the user's argv.
     inner_cmd = "/usr/local/bin/sopify " + " ".join(_shellquote(a) for a in argv)
 
+    # `sbx run SANDBOX -- ...` passes args to the SHELL AGENT itself (which
+    # is already bash), so `-- bash -lc X` becomes `bash bash -lc X` and
+    # bash tries to interpret its own binary as a script (rc=126).
+    # `sbx exec` is the right call — it runs an arbitrary command inside
+    # the running sandbox, starting it first if needed.
     try:
         return subprocess.call([
-            SBX_BINARY, "run", sandbox,
-            "--", "bash", "-lc", inner_cmd,
+            SBX_BINARY, "exec", "-it", sandbox,
+            "bash", "-lc", inner_cmd,
         ])
     except KeyboardInterrupt:
         return 130
