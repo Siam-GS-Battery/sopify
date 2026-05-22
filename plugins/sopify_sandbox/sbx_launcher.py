@@ -225,7 +225,9 @@ def status_summary() -> str:
     if not is_logged_in():
         return "sbx installed; `sbx login` required"
     try:
-        v = subprocess.check_output([SBX_BINARY, "version"], text=True, timeout=1)
+        # 2.5s — sbx version can be slow on cold daemon, especially first
+        # call of the session. Still under the doctor 3s gate via parallelism.
+        v = subprocess.check_output([SBX_BINARY, "version"], text=True, timeout=2.5)
         for line in v.splitlines():
             if "Client Version" in line:
                 return f"sbx OK ({line.split(':',1)[1].strip().split()[0]})"

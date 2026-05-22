@@ -64,33 +64,72 @@ def _ensure_image(report: InstallReport) -> None:
         ["docker", "image", "inspect", SANDBOX_IMAGE],
         capture_output=True,
     )
-    if inspect.returncode == 0:
+    if inspect.returncode != 0:
+        # Build the image in the host Docker daemon.
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        dockerfile = os.path.join(repo_root, "docker", "sopify-sandbox", "Dockerfile")
+        if not os.path.isfile(dockerfile):
+            report.errors.append(f"Dockerfile not found at {dockerfile}")
+            return
+        report.steps.append(
+            f"building {SANDBOX_IMAGE} (Linux Python deps, ~2-5 min first time)..."
+        )
+        build = subprocess.run(
+            ["docker", "build", "-t", SANDBOX_IMAGE,
+             "-f", dockerfile, repo_root, "--quiet"],
+            capture_output=True, text=True,
+        )
+        if build.returncode != 0:
+            tail = "\n".join(build.stderr.splitlines()[-12:])
+            report.errors.append(f"image build failed:\n{tail}")
+            return
+        report.steps.append(f"image {SANDBOX_IMAGE}: built locally")
+    else:
         report.steps.append(f"image {SANDBOX_IMAGE}: already present")
+
+    # Mirror the host image into sbx's containerd runtime so it's available
+    # as `sbx create --template`. sbx ships its own image store separate
+    # from the host Docker daemon, so a host-only image triggers a registry
+    # pull that fails ("pull access denied").
+    _sync_image_to_sbx(report)
+
+
+def _sync_image_to_sbx(report: InstallReport) -> None:
+    """Save host image to tar + `sbx template load` so sbx can use it."""
+    import shutil
+    if not shutil.which("sbx"):
+        report.steps.append("sbx template: skipped (sbx not installed)")
         return
-    # Skip pull — we ship the Dockerfile in-repo and want a deterministic
-    # Linux build using the user's current source. Build directly.
-    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    dockerfile = os.path.join(repo_root, "docker", "sopify-sandbox", "Dockerfile")
-    if not os.path.isfile(dockerfile):
-        report.errors.append(f"Dockerfile not found at {dockerfile}")
-        return
-    report.steps.append(
-        f"building {SANDBOX_IMAGE} (Linux Python deps, ~2-5 min first time)..."
-    )
-    # The whole repo is the build context (Dockerfile does `COPY . /opt/sopify`).
-    # We use --quiet so steps stay readable in `sopify install` output; pipe
-    # stderr through tail on failure for diagnosis.
-    build = subprocess.run(
-        ["docker", "build", "-t", SANDBOX_IMAGE,
-         "-f", dockerfile, repo_root, "--quiet"],
+
+    # Check if sbx already has the image at the right version.
+    # Image IDs change on every rebuild, so we always re-sync to keep them
+    # aligned. The save+load is fast (<10s) for our ~470MB image.
+    tar_path = "/tmp/sopify-sandbox-sbx-import.tar"
+    save = subprocess.run(
+        ["docker", "save", "-o", tar_path, SANDBOX_IMAGE],
         capture_output=True, text=True,
     )
-    if build.returncode != 0:
-        # Show last 12 lines of stderr so the user can see where it broke.
-        tail = "\n".join(build.stderr.splitlines()[-12:])
-        report.errors.append(f"image build failed:\n{tail}")
+    if save.returncode != 0:
+        report.steps.append(
+            f"sbx template: docker save failed ({save.stderr[:120]})"
+        )
         return
-    report.steps.append(f"image {SANDBOX_IMAGE}: built locally")
+
+    load = subprocess.run(
+        ["sbx", "template", "load", tar_path],
+        capture_output=True, text=True,
+    )
+    if load.returncode == 0:
+        report.steps.append("sbx template: loaded sopify-sandbox into sbx runtime")
+    else:
+        report.steps.append(
+            f"sbx template load failed (rc={load.returncode}): "
+            f"{load.stderr.strip()[:160]}"
+        )
+    try:
+        os.unlink(tar_path)
+    except OSError:
+        pass
 
 
 def _ensure_network(report: InstallReport) -> None:
