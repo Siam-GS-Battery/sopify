@@ -89,3 +89,25 @@ startup:
           ln -sf "/sopify-config/$f" "$HOME/.sopify/$f"
         fi
       done
+  - command: |
+      # Mirror host's ~/.hermes/ into microVM so Hermes' env_loader sees
+      # the user's ANTHROPIC_TOKEN/API key + auth.json. sbx_launcher.py
+      # mounts ~/.hermes/ as a :ro workspace — sbx preserves the host
+      # path inside the sandbox, so it lands at the original absolute
+      # path (e.g. /Users/<name>/.hermes/ on macOS). Probe a few common
+      # locations + fall back to a glob across /Users and /home.
+      mkdir -p "$HOME/.hermes"
+      hermes_src=""
+      for candidate in /Users/*/.hermes /home/*/.hermes /root/.hermes; do
+        if [ -d "$candidate" ] && [ "$candidate" != "$HOME/.hermes" ]; then
+          hermes_src="$candidate"
+          break
+        fi
+      done
+      if [ -n "$hermes_src" ]; then
+        for f in .env auth.json; do
+          if [ -e "$hermes_src/$f" ]; then
+            ln -sf "$hermes_src/$f" "$HOME/.hermes/$f"
+          fi
+        done
+      fi

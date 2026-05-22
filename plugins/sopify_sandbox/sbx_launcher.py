@@ -231,7 +231,17 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     sandbox = _sandbox_name_for_cwd()
 
     # 1. Ensure sandbox exists with the right template (idempotent).
+    #
+    # Mount ~/.hermes/ as :ro so the host's .env (containing the user's
+    # ANTHROPIC API key) reaches the microVM. The kit's startup script
+    # symlinks /workspaces/.hermes/.env into /home/sopify/.hermes/.env
+    # so Hermes' env_loader picks it up at runtime. Without this mount the
+    # sandbox slash_workers run with an empty/13-char placeholder API key
+    # and silently fail all model calls (chat tab stays empty).
     workspaces = [cwd, f"{app_root}:ro"]
+    hermes_home = Path.home() / ".hermes"
+    if hermes_home.is_dir():
+        workspaces.append(f"{hermes_home}:ro")
     if _sandbox_exists(sandbox) and _image_exists() and not _sandbox_has_sopify(sandbox):
         # Stale sandbox from before --template support landed. Recreate.
         print(f"sopify: recreating sandbox '{sandbox}' with sopify-sandbox template...",

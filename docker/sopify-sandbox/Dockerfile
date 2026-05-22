@@ -24,7 +24,7 @@ ENV PYTHONUNBUFFERED=1 \
 # passwd provides useradd; adduser is the friendly wrapper.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tini ca-certificates curl git bash \
-        passwd adduser \
+        passwd adduser procps \
         nodejs npm \
         python3 python3-venv python3-dev build-essential \
         ripgrep ffmpeg \
@@ -63,6 +63,21 @@ RUN uv sync --frozen \
     || uv sync \
         --extra web --extra cli --extra anthropic --extra pty
 
+# Pre-install TUI Node deps so the dashboard chat tab starts instantly.
+# Without this, every microVM boot triggers `npm install` (30-90s) the first
+# time the user opens /chat, and the WebSocket handshake races against the
+# install causing `RuntimeError: WebSocket is not connected` in tui_gateway.
+# Build the @hermes/ink local package's dist/ bundle too — main.py's
+# _tui_need_npm_install treats a missing @hermes/ink as a reinstall signal.
+RUN cd /opt/sopify/ui-tui \
+    && npm install --silent --no-fund --no-audit --progress=false \
+    && cd /opt/sopify/ui-tui/packages/hermes-ink \
+    && npm run build
+
+# Pre-bundle the TUI itself (esbuild → dist/entry.js) so node can run it
+# directly without an esbuild step on first launch.
+RUN cd /opt/sopify/ui-tui && node scripts/build.mjs
+
 # Wire the wrapper so `sopify ...` works inside the microVM regardless
 # of how sbx invokes commands. We write a tiny bash wrapper that
 # EXPLICITLY invokes the venv python — a Python-shebang shim resolves
@@ -84,6 +99,9 @@ RUN mkdir -p /workspace /sopify-auth /sopify-config /sopify-sessions \
 # at the user's first dashboard launch.
 USER sopify
 RUN /opt/sopify/.venv/bin/python -c "import yaml, fastapi, uvicorn, anthropic, ptyprocess; print('venv smoke ok')"
+RUN test -f /opt/sopify/ui-tui/dist/entry.js \
+    && test -f /opt/sopify/ui-tui/node_modules/@hermes/ink/package.json \
+    && echo "tui bundle ok"
 RUN /opt/sopify/.venv/bin/python -c "import sys; sys.path.insert(0, '/opt/sopify'); \
                 from plugins.sopify_core import version; \
                 print('sopify build smoke:', version.full_version_string())"
