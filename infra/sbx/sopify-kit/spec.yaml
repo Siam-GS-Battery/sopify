@@ -55,6 +55,24 @@ env:
     value: "1"
   - name: HERMES_TUI_INLINE
     value: "1"
+  # Bypass Docker MCP gateway for direct AI provider calls.
+  # sbx auto-injects `https_proxy=http://gateway.docker.internal:3128`
+  # and replaces well-known secret env vars (ANTHROPIC_API_KEY, OPENAI_API_KEY,
+  # XAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, NEBIUS_API_KEY,
+  # GOOGLE_API_KEY) with the sentinel string "proxy-managed". The gateway
+  # is meant to substitute the real keys at proxy time, but Docker Desktop
+  # has no per-provider credential configured here, so the gateway drops
+  # the request (HTTPS connect succeeds, then the tunnel hangs → curl
+  # returns HTTP:000). Slash workers go silent and the /chat tab stays
+  # empty with no error surfaced.
+  #
+  # Whitelisting AI endpoints in no_proxy + NO_PROXY makes the slash
+  # worker connect directly to the provider with the real key promoted
+  # from ~/.hermes/.env by the auth_override plugin.
+  - name: no_proxy
+    value: "localhost,127.0.0.1,::1,gateway.docker.internal,api.anthropic.com,api.openai.com,openrouter.ai,api.novita.ai,api-inference.huggingface.co,huggingface.co,registry.npmjs.org,pypi.org,files.pythonhosted.org,api.github.com,raw.githubusercontent.com"
+  - name: NO_PROXY
+    value: "localhost,127.0.0.1,::1,gateway.docker.internal,api.anthropic.com,api.openai.com,openrouter.ai,api.novita.ai,api-inference.huggingface.co,huggingface.co,registry.npmjs.org,pypi.org,files.pythonhosted.org,api.github.com,raw.githubusercontent.com"
   - name: ANTHROPIC_TOKEN
     skipIfEnv: ANTHROPIC_TOKEN
   - name: ANTHROPIC_API_KEY

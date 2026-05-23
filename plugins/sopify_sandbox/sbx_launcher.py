@@ -35,6 +35,20 @@ SBX_BINARY = "sbx"
 SANDBOX_PREFIX = "sopify"
 KIT_DIR_REL = "infra/sbx/sopify-kit"
 
+# AI provider endpoints that must bypass the sbx-injected MCP gateway proxy
+# (gateway.docker.internal:3128). Kept in sync with the `no_proxy` value in
+# infra/sbx/sopify-kit/spec.yaml — that file is the canonical declaration
+# but sbx schema v1 silently drops the env block, so the launcher re-applies
+# the same list at exec time. See spec.yaml comment block for full context.
+_AI_NO_PROXY = (
+    "localhost,127.0.0.1,::1,gateway.docker.internal,"
+    "api.anthropic.com,api.openai.com,"
+    "openrouter.ai,api.novita.ai,"
+    "api-inference.huggingface.co,huggingface.co,"
+    "registry.npmjs.org,pypi.org,files.pythonhosted.org,"
+    "api.github.com,raw.githubusercontent.com"
+)
+
 
 def is_available() -> bool:
     """Return True if sbx CLI is on PATH."""
@@ -312,7 +326,24 @@ def spawn(argv: List[str], *, with_kit: bool = True,
 
     # 3. Build inner command — invoke sopify wrapper (set up by kit's startup
     #    script as /usr/local/bin/sopify) with the user's argv.
-    inner_cmd = "/usr/local/bin/sopify " + " ".join(_shellquote(a) for a in argv)
+    #
+    #    Workaround for sbx kit schema v1: only `network.allowedDomains` is
+    #    parsed from spec.yaml; the `env:` block (which declares no_proxy +
+    #    skipIfEnv passthroughs) is silently ignored. Without it the microVM
+    #    boots with sbx defaults:
+    #      ANTHROPIC_API_KEY="proxy-managed"  ← sentinel, not a real key
+    #      https_proxy=http://gateway.docker.internal:3128  (TLS-intercept,
+    #        self-signed CA → SDK verify fails → HTTP 000, chat goes silent)
+    #    Re-apply the spec.yaml env contract here at exec time so all child
+    #    processes (FastAPI → node PTY → tui_gateway → slash_worker) inherit
+    #    a working configuration. auth_override.apply() then pulls the real
+    #    ANTHROPIC_TOKEN from ~/.hermes/.env (sentinel triggers fallback).
+    inner_cmd = (
+        f"export no_proxy={_shellquote(_AI_NO_PROXY)}; "
+        f"export NO_PROXY={_shellquote(_AI_NO_PROXY)}; "
+        'if [ "$ANTHROPIC_API_KEY" = "proxy-managed" ]; then unset ANTHROPIC_API_KEY; fi; '
+        "/usr/local/bin/sopify " + " ".join(_shellquote(a) for a in argv)
+    )
 
     # `sbx run SANDBOX -- ...` passes args to the SHELL AGENT itself (which
     # is already bash), so `-- bash -lc X` becomes `bash bash -lc X` and
