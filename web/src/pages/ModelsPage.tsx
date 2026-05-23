@@ -32,6 +32,9 @@ import { usePageHeader } from "@/contexts/usePageHeader";
 import { useI18n } from "@/i18n";
 import { PluginSlot } from "@/plugins";
 import { ModelPickerDialog } from "@/components/ModelPickerDialog";
+import { ApiKeyUploadCard } from "@/components/ApiKeyUploadCard";
+import { Toast } from "@/components/Toast";
+import { useToast } from "@/hooks/useToast";
 
 const PERIODS = [
   { label: "7d", days: 7 },
@@ -777,6 +780,7 @@ export default function ModelsPage() {
   const [showTokens, setShowTokens] = useState(false);
   const { t } = useI18n();
   const { setAfterTitle, setEnd } = usePageHeader();
+  const { toast, showToast } = useToast();
 
   useEffect(() => {
     api
@@ -985,7 +989,14 @@ export default function ModelsPage() {
         </>
       )}
 
+      <ApiKeyUploadCard
+        onError={(msg) => showToast(msg, "error")}
+        onSuccess={(msg) => showToast(msg, "success")}
+      />
+
       <PluginSlot name="models:bottom" />
+
+      <Toast toast={toast} />
     </div>
   );
 }

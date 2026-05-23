@@ -2352,6 +2352,205 @@ async def cancel_oauth_session(session_id: str, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Provider API key upload — Sopify-specific.
+#
+# Replaces the terminal flow:
+#     echo "$KEY" | sbx secret set -g anthropic
+#     <update ~/.hermes/.env>
+# with a single PUT /api/providers/api-key that writes to both stores.
+# ---------------------------------------------------------------------------
+
+try:  # plugin module — only present in Sopify installs
+    from plugins.sopify_providers import (  # type: ignore
+        providers_registry as _sopify_providers,
+        sbx_secret as _sopify_sbx_secret,
+        env_file as _sopify_env_file,
+    )
+    _SOPIFY_API_KEYS_AVAILABLE = True
+except Exception:  # pragma: no cover — Hermes-only install
+    _SOPIFY_API_KEYS_AVAILABLE = False
+
+
+class ApiKeyUpdate(BaseModel):
+    provider_id: str
+    api_key: str
+    sync_to_sbx_secret: bool = True
+
+
+def _api_key_status_list() -> list[dict]:
+    """Render the provider registry against the current key stores."""
+    env_keys = _sopify_env_file.read_keys()
+    sbx_services = _sopify_sbx_secret.list_services()
+    sbx_ok = _sopify_sbx_secret.is_available()
+    out: list[dict] = []
+    for p in _sopify_providers.PROVIDERS:
+        env_value = env_keys.get(p.env_var, "").strip().strip('"').strip("'")
+        set_in_env = bool(env_value) and env_value not in {"proxy-managed", "managed", "placeholder"}
+        in_sbx = bool(p.sbx_service) and p.sbx_service.lower() in sbx_services
+        out.append({
+            "id": p.id,
+            "label": p.label,
+            "env_var": p.env_var,
+            "sbx_service": p.sbx_service,
+            "key_prefix": p.key_prefix,
+            "docs_url": p.docs_url,
+            "set_in_env": set_in_env,
+            "set_in_sbx_secret": in_sbx,
+            "redacted_value": redact_key(env_value) if set_in_env else None,
+            "sbx_available": sbx_ok,
+        })
+    return out
+
+
+@app.get("/api/providers/api-key")
+async def list_api_keys():
+    """Return per-provider key status. Read-only — no auth required since
+    only redacted previews are returned (`redact_key` shows first 4 + last 4
+    of the key, never the full value)."""
+    if not _SOPIFY_API_KEYS_AVAILABLE:
+        raise HTTPException(status_code=501, detail="sopify_providers plugin not installed")
+    return {"providers": _api_key_status_list()}
+
+
+@app.put("/api/providers/api-key")
+async def set_api_key(body: ApiKeyUpdate, request: Request):
+    """Save an API key to ~/.hermes/.env and (optionally) the sbx secret store.
+
+    Token-protected. Validates the provider id against the registry and
+    optionally the expected key prefix. Never logs the raw value.
+    """
+    _require_token(request)
+    if not _SOPIFY_API_KEYS_AVAILABLE:
+        raise HTTPException(status_code=501, detail="sopify_providers plugin not installed")
+
+    provider = _sopify_providers.by_id(body.provider_id)
+    if provider is None:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {body.provider_id}")
+
+    key = body.api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="api_key is empty")
+    if len(key) < 16:
+        raise HTTPException(status_code=400, detail="api_key looks too short to be valid")
+    if provider.key_prefix and not key.startswith(provider.key_prefix):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Key does not start with expected prefix '{provider.key_prefix}'",
+        )
+
+    # 1) Write to ~/.hermes/.env (always — needed for non-sandbox callers).
+    try:
+        _sopify_env_file.set_keys({provider.env_var: key})
+    except Exception:
+        _log.exception("PUT /api/providers/api-key — env write failed for %s", provider.id)
+        raise HTTPException(status_code=500, detail="Failed to write ~/.hermes/.env")
+    _log.info("api-key saved to .env: provider=%s var=%s len=%d",
+              provider.id, provider.env_var, len(key))
+
+    # 2) Optionally sync to sbx secret store.
+    sbx_synced = False
+    sbx_error: str | None = None
+    if (
+        body.sync_to_sbx_secret
+        and provider.sbx_service
+        and _sopify_sbx_secret.is_available()
+    ):
+        # Only attempt the sync when sbx is reachable. is_available() returns
+        # False inside the microVM (SOPIFY_IN_SANDBOX=1) since sbx is a
+        # host-side controller — the caller will see sbx_available=false in
+        # the GET response and can render that as "stored in .env only".
+        ok, err = _sopify_sbx_secret.set_secret(provider.sbx_service, key)
+        sbx_synced = ok
+        if not ok:
+            sbx_error = err
+            _log.warning("sbx secret set failed for service=%s: %s", provider.sbx_service, err)
+        else:
+            _log.info("api-key synced to sbx secret store: service=%s", provider.sbx_service)
+
+    return {
+        "ok": True,
+        "provider_id": provider.id,
+        "synced_to_env": True,
+        "synced_to_sbx_secret": sbx_synced,
+        "sbx_secret_error": sbx_error,
+        "redacted_value": redact_key(key),
+    }
+
+
+@app.delete("/api/providers/api-key/{provider_id}")
+async def delete_api_key(provider_id: str, request: Request):
+    """Remove a provider's key from both ~/.hermes/.env and sbx secret store."""
+    _require_token(request)
+    if not _SOPIFY_API_KEYS_AVAILABLE:
+        raise HTTPException(status_code=501, detail="sopify_providers plugin not installed")
+    provider = _sopify_providers.by_id(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+
+    # Strip from env (no-op if absent).
+    _sopify_env_file.set_keys({}, strip=[provider.env_var])
+
+    # Strip from sbx store if applicable.
+    sbx_removed = False
+    sbx_error: str | None = None
+    if provider.sbx_service and _sopify_sbx_secret.is_available():
+        ok, err = _sopify_sbx_secret.remove_secret(provider.sbx_service)
+        sbx_removed = ok
+        if not ok:
+            sbx_error = err
+
+    _log.info("api-key removed: provider=%s", provider.id)
+    return {
+        "ok": True,
+        "provider_id": provider.id,
+        "removed_from_env": True,
+        "removed_from_sbx_secret": sbx_removed,
+        "sbx_secret_error": sbx_error,
+    }
+
+
+@app.post("/api/providers/api-key/test/{provider_id}")
+async def test_api_key(provider_id: str, request: Request):
+    """Smoke-test the stored key by hitting a cheap provider endpoint.
+
+    Currently supports anthropic + openai. Other providers return
+    `tested=False` (UI will fall back to "stored but not verified").
+    """
+    _require_token(request)
+    if not _SOPIFY_API_KEYS_AVAILABLE:
+        raise HTTPException(status_code=501, detail="sopify_providers plugin not installed")
+    provider = _sopify_providers.by_id(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+
+    env_keys = _sopify_env_file.read_keys()
+    key = env_keys.get(provider.env_var, "").strip().strip('"').strip("'")
+    if not key or key in {"proxy-managed", "managed", "placeholder"}:
+        return {"tested": False, "ok": False, "reason": "no key stored"}
+
+    import urllib.request
+    import urllib.error
+
+    if provider.id == "anthropic":
+        url = "https://api.anthropic.com/v1/models"
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    elif provider.id == "openai":
+        url = "https://api.openai.com/v1/models"
+        headers = {"Authorization": f"Bearer {key}"}
+    else:
+        return {"tested": False, "ok": False, "reason": "test not implemented for this provider"}
+
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return {"tested": True, "ok": True, "http_status": resp.status}
+    except urllib.error.HTTPError as exc:
+        return {"tested": True, "ok": False, "http_status": exc.code, "reason": f"HTTP {exc.code}"}
+    except Exception as exc:
+        return {"tested": True, "ok": False, "reason": str(exc)[:200]}
+
+
+# ---------------------------------------------------------------------------
 # Session detail endpoints
 # ---------------------------------------------------------------------------
 

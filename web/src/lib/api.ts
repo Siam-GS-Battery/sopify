@@ -137,6 +137,31 @@ export const api = {
     });
   },
 
+  // Sopify API key upload (per-provider) — see hermes_cli/web_server.py
+  // `/api/providers/api-key` endpoints + plugins/sopify_providers/providers_registry.py
+  getApiKeyProviders: () =>
+    fetchJSON<{ providers: ApiKeyProvider[] }>("/api/providers/api-key"),
+  setApiKey: (
+    provider_id: string,
+    api_key: string,
+    sync_to_sbx_secret = true,
+  ) =>
+    fetchJSON<ApiKeySaveResult>("/api/providers/api-key", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider_id, api_key, sync_to_sbx_secret }),
+    }),
+  deleteApiKey: (provider_id: string) =>
+    fetchJSON<ApiKeyDeleteResult>(
+      `/api/providers/api-key/${encodeURIComponent(provider_id)}`,
+      { method: "DELETE" },
+    ),
+  testApiKey: (provider_id: string) =>
+    fetchJSON<ApiKeyTestResult>(
+      `/api/providers/api-key/test/${encodeURIComponent(provider_id)}`,
+      { method: "POST" },
+    ),
+
   // Cron jobs
   getCronJobs: (profile = "all") =>
     fetchJSON<CronJob[]>(`/api/cron/jobs?profile=${encodeURIComponent(profile)}`),
@@ -422,6 +447,46 @@ export interface EnvVarInfo {
   is_password: boolean;
   tools: string[];
   advanced: boolean;
+}
+
+/** Provider entry for the API key upload card on /models. */
+export interface ApiKeyProvider {
+  id: string;
+  label: string;
+  env_var: string;
+  /** sbx secret service name, or null when sbx doesn't manage this provider. */
+  sbx_service: string | null;
+  key_prefix: string;
+  docs_url: string | null;
+  set_in_env: boolean;
+  set_in_sbx_secret: boolean;
+  redacted_value: string | null;
+  /** True when the sbx CLI is on PATH on the host. */
+  sbx_available: boolean;
+}
+
+export interface ApiKeySaveResult {
+  ok: boolean;
+  provider_id: string;
+  synced_to_env: boolean;
+  synced_to_sbx_secret: boolean;
+  sbx_secret_error: string | null;
+  redacted_value: string;
+}
+
+export interface ApiKeyDeleteResult {
+  ok: boolean;
+  provider_id: string;
+  removed_from_env: boolean;
+  removed_from_sbx_secret: boolean;
+  sbx_secret_error: string | null;
+}
+
+export interface ApiKeyTestResult {
+  tested: boolean;
+  ok: boolean;
+  http_status?: number;
+  reason?: string;
 }
 
 export interface SessionMessage {
