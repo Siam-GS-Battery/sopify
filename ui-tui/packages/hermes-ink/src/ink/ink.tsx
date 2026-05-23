@@ -7,7 +7,17 @@ import throttle from 'lodash-es/throttle.js'
 import React, { type ReactNode } from 'react'
 import type { FiberRoot } from 'react-reconciler'
 import { ConcurrentRoot } from 'react-reconciler/constants.js'
-import { onExit } from 'signal-exit'
+// signal-exit changed its export shape between v3 (CommonJS default export)
+// and v4 (named `onExit` export). hermes-ink declares v4 but workspace
+// hoisting can resolve v3 from the parent node_modules, in which case
+// `import { onExit }` is undefined and the constructor silently throws
+// TypeError mid-init (caught by Hermes' uncaughtException handler), leaving
+// the Ink instance half-constructed and Ink's React reconciler never paints
+// a single frame. Resolve at module load against either shape.
+import * as _signalExitNs from 'signal-exit'
+const onExit: (cb: () => void, opts?: { alwaysLast?: boolean }) => () => void =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ((_signalExitNs as any).onExit ?? (_signalExitNs as any).default ?? (_signalExitNs as any)) as never
 
 import { flushInteractionTime } from '../bootstrap/state.js'
 import { getYogaCounters } from '../native-ts/yoga-layout/index.js'
@@ -310,11 +320,17 @@ export default class Ink {
   private selectionAutoScrollTimer: ReturnType<typeof setInterval> | null = null
   private selectionAutoScrollDir: -1 | 0 | 1 = 0
   constructor(private readonly options: Options) {
+    const _TI = (l: string) => { if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, `[SOPIFY_TRACE_INKC] ${l}\n`) }
+    _TI('C0 ctor enter')
     autoBind(this)
+    _TI('C1 autoBind done')
 
     if (this.options.patchConsole) {
+      _TI('C2a about to patchConsole')
       this.restoreConsole = this.patchConsole()
+      _TI('C2b patchConsole done; about to patchStderr')
       this.restoreStderr = this.patchStderr()
+      _TI('C2c patchStderr done')
     }
 
     // Host-supplied hyperlink-open callback. The mouse-event pipeline
@@ -371,11 +387,19 @@ export default class Ink {
 
     // Ignore last render after unmounting a tree to prevent empty output before exit
     this.isUnmounted = false
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C3 frames+pools+throttle done; about to onExit\n')
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, `[SOPIFY_TRACE_INKC] C3a onExit type=${typeof onExit} unmount type=${typeof this.unmount}\n`)
 
     // Unmount when process exits
-    this.unsubscribeExit = onExit(this.unmount, {
-      alwaysLast: false
-    })
+    if (process.env.SOPIFY_TUI_SKIP_ONEXIT === '1') {
+      if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C3b SKIPPING onExit\n')
+      this.unsubscribeExit = () => {}
+    } else {
+      this.unsubscribeExit = onExit(this.unmount, {
+        alwaysLast: false
+      })
+    }
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C4 onExit registered\n')
 
     if (options.stdout.isTTY) {
       options.stdout.on('resize', this.handleResize)
@@ -387,10 +411,14 @@ export default class Ink {
       }
     }
 
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C5 TTY listeners done; about to dom.createNode\n')
     this.rootNode = dom.createNode('ink-root')
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C6 rootNode created; about to new FocusManager\n')
     this.focusManager = new FocusManager((target, event) => dispatcher.dispatchDiscrete(target, event))
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C7 FocusManager done; about to createRenderer\n')
     this.rootNode.focusManager = this.focusManager
     this.renderer = createRenderer(this.rootNode, this.stylePool)
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C8 createRenderer done\n')
     this.rootNode.onRender = this.scheduleRender
     this.rootNode.onImmediateRender = this.onRender
 
@@ -416,6 +444,7 @@ export default class Ink {
       }
     }
 
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C9 onComputeLayout assigned; about to reconciler.createContainer\n')
     this.container = reconciler.createContainer(
       this.rootNode,
       ConcurrentRoot,
@@ -431,6 +460,7 @@ export default class Ink {
       // onRecoverableError
       noop // onDefaultTransitionIndicator
     )
+    if (process.env.SOPIFY_TUI_TRACE === '1') writeSync(2, '[SOPIFY_TRACE_INKC] C10 reconciler.createContainer done; ctor returning\n')
 
     if (process.env.NODE_ENV === 'development') {
       reconciler.injectIntoDevTools({
