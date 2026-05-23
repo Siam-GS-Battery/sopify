@@ -104,8 +104,17 @@ export const forceRedraw = (stdout: NodeJS.WriteStream = process.stdout): boolea
 /**
  * Mount a component and render the output.
  */
+// Use raw fd write to bypass Ink's patchStderr interceptor which silently
+// swallows process.stderr.write calls after the constructor patches it.
+const _ST = (label: string) => {
+  if (process.env.SOPIFY_TUI_TRACE === '1') {
+    try { (require('fs') as typeof import('fs')).writeSync(2, `[SOPIFY_TRACE_INK] ${label}\n`) } catch {}
+  }
+}
 export const renderSync = (node: ReactNode, options?: NodeJS.WriteStream | RenderOptions): Instance => {
+  _ST('R0 renderSync enter')
   const opts = getOptions(options)
+  _ST('R1 getOptions done')
 
   const inkOptions: InkOptions = {
     stdout: process.stdout,
@@ -115,10 +124,18 @@ export const renderSync = (node: ReactNode, options?: NodeJS.WriteStream | Rende
     patchConsole: true,
     ...opts
   }
+  _ST('R2 inkOptions built; about to getInstance/new Ink')
 
-  const instance: Ink = getInstance(inkOptions.stdout, () => new Ink(inkOptions))
+  const instance: Ink = getInstance(inkOptions.stdout, () => {
+    _ST('R3a inside factory: about to call new Ink')
+    const ink = new Ink(inkOptions)
+    _ST('R3b new Ink constructor returned')
+    return ink
+  })
+  _ST('R4 getInstance returned; about to call instance.render(node)')
 
   instance.render(node)
+  _ST('R5 instance.render(node) returned')
 
   return {
     rerender: instance.render,
