@@ -1,4 +1,4 @@
-# Sopify Chat Tab — Session Handoff (2026-05-23)
+# Sopify Chat Tab — Session Handoff (2026-05-23, updated end-of-day)
 
 > Open this file when starting a fresh Claude session about Sopify
 > chat. It tells the next assistant exactly what's working, what's
@@ -6,13 +6,26 @@
 
 ---
 
-## TL;DR — the actual current state
+## TL;DR — current state (RESOLVED)
 
-**What works:** Dashboard loads in browser, model picker works, API key verified valid against Anthropic, sandbox boots cleanly, all infra fixes landed.
+**Status: 🟢 /chat works end-to-end.** Banner renders, prompt appears,
+model badge shows, slash workers reach Anthropic, responses stream back
+into the xterm panel.
 
-**What does NOT work:** Typing "hello" in the /chat tab produces no response. The terminal shows the typed input but no TUI banner, no prompt, and no model reply.
+**Bug found + fixed this session:** `signal-exit` v3 was hoisted into the
+ui-tui workspace `node_modules` while `@hermes/ink` declared v4. The
+import `import { onExit } from 'signal-exit'` resolved to `undefined`, the
+Ink constructor threw a swallowed `TypeError` mid-init, and the React
+reconciler never painted a frame. Compat-shim patch in
+[ui-tui/packages/hermes-ink/src/ink/ink.tsx](ui-tui/packages/hermes-ink/src/ink/ink.tsx#L10)
+handles both v3 (default export) and v4 (named export). Full write-up in
+[CHAT_RENDER_FIX_PLAN.md](CHAT_RENDER_FIX_PLAN.md).
 
-**Why this matters:** The user has spent a long debug session reaching this point. Every layer LOOKS fixed but chat is still empty. The next session must NOT re-debug the layers below — they're all green. Focus on the chat tab itself.
+**Also shipped this session:**
+- API Keys upload card on `/models` page (no more terminal-only key flow)
+- `sbx_secret` host-vs-sandbox guard + UI text
+- Approach 1 `no_proxy` bypass in sbx launcher
+- PROXY_FIX_PLAN.md documents the three approaches and why we ship 1+3
 
 ---
 
@@ -31,7 +44,7 @@
 
 ## 2. What was DONE in this session (do not redo)
 
-Ten fixes, in order — every one of them is now reflected in:
+Original ten fixes from the morning still apply — every one is reflected in:
 - The source repo at `~/ai_engineer/gs/project-based/sopify/sopify-harness/`
 - The runtime symlink `~/.sopify-app/` (now a symlink to the source repo, not a copy)
 - The Docker image `sopify-sandbox:latest` (rebuilt today)
@@ -39,63 +52,53 @@ Ten fixes, in order — every one of them is now reflected in:
 1. **Dockerfile** — pre-installs `ui-tui/node_modules` + esbuild bundle at build time. Eliminates "Installing TUI dependencies…" race.
 2. **sbx_launcher.py** — added `~/.hermes/:ro` mount as a third workspace.
 3. **kit spec.yaml** — added startup symlink commands (later discovered sbx schema v1 ignores `startup` block — this fix is inert but harmless).
-4. **sbx_launcher.py** — added `_link_hermes_into_sandbox()` which runs the symlink via `sbx exec` right after sandbox creation. This is the live code path that actually creates `/home/sopify/.hermes/.env → /Users/.../.hermes/.env`.
+4. **sbx_launcher.py** — added `_link_hermes_into_sandbox()` which runs the symlink via `sbx exec` right after sandbox creation.
 5. **web/package.json** — changed `build: "tsc -b && vite build"` to `build: "vite build"` (lucide-react implicit-any types were blocking the runtime web build).
 6. **plugins/sopify_providers/env_cli.py + env_file.py** — new `sopify env list / set / unset` subcommand that writes directly to `~/.hermes/.env`.
-7. **`~/.sopify-app` symlink** — replaced the file-by-file copy install with a symlink to the source repo. Old install preserved as `~/.sopify-app.bak-20260522-231051`. **Do NOT delete** the source repo at `~/ai_engineer/gs/project-based/sopify/sopify-harness/` — the install depends on it now.
-8. **sbx_launcher.py** — skip duplicate workspace mount when `cwd.resolve() == app_root.resolve()`. Without this, running `sopify dashboard` from inside the sopify-harness directory failed with "conflicting read-only settings."
-9. **plugins/sopify_providers/auth_override.py** — `_sync_hermes_env_file()` now early-returns when `SOPIFY_IN_SANDBOX=1`. Without this, plugin import crashed with `[Errno 30] Read-only file system: '/home/sopify/.hermes/.env'`.
-10. **Docker image rebuild** — done today to bake fix #9 into `/opt/sopify/...`.
+7. **`~/.sopify-app` symlink** — replaced the file-by-file copy install with a symlink to the source repo. Old install preserved as `~/.sopify-app.bak-20260522-231051`.
+8. **sbx_launcher.py** — skip duplicate workspace mount when `cwd.resolve() == app_root.resolve()`.
+9. **plugins/sopify_providers/auth_override.py** — `_sync_hermes_env_file()` early-returns when `SOPIFY_IN_SANDBOX=1`.
+10. **Docker image rebuild** — to bake fix #9 into `/opt/sopify/...`.
 
-## 3. What does NOT work (the actual remaining bug)
+### Afternoon additions (post-morning handoff)
 
-User types `hello` in /chat tab → nothing happens. No TUI banner appears, no prompt, no response. The xterm in the browser shows just the typed text and a cursor.
+11. **Approach 1 — `no_proxy` bypass in sbx_launcher.** Added `_AI_NO_PROXY` constant + shell prologue in `inner_cmd` so AI endpoints (`api.anthropic.com`, `api.openai.com`, etc.) bypass the broken MCP gateway proxy. Also unsets `ANTHROPIC_API_KEY=proxy-managed` sentinel so `auth_override.apply()` pulls the real key from `~/.hermes/.env`. See [PROXY_FIX_PLAN.md](PROXY_FIX_PLAN.md) §3.
+12. **API Keys upload card** on `/models` page. New `providers_registry.py`, `sbx_secret.py` helper, `GET/PUT/DELETE/POST` endpoints under `/api/providers/api-key`, `ApiKeyUploadCard.tsx` with auto-test (Anthropic + OpenAI) and prefix validation. Files: [plugins/sopify_providers/providers_registry.py](plugins/sopify_providers/providers_registry.py), [plugins/sopify_providers/sbx_secret.py](plugins/sopify_providers/sbx_secret.py), [hermes_cli/web_server.py:2354+](hermes_cli/web_server.py#L2354), [web/src/components/ApiKeyUploadCard.tsx](web/src/components/ApiKeyUploadCard.tsx), [web/src/pages/ModelsPage.tsx](web/src/pages/ModelsPage.tsx).
+13. **`sbx_secret` sandbox guard.** `is_available()` returns `False` when `SOPIFY_IN_SANDBOX=1` (sbx CLI lives on the host, never inside the microVM). Stops the API from logging "sbx CLI not installed" warnings on every save.
+14. **🎯 THE chat bug fix — `signal-exit` v3/v4 compat shim.** Single-line import change in [ui-tui/packages/hermes-ink/src/ink/ink.tsx:10](ui-tui/packages/hermes-ink/src/ink/ink.tsx#L10). Resolves the months-old "Ink renders nothing in PTY" issue. Full investigation in [CHAT_RENDER_FIX_PLAN.md](CHAT_RENDER_FIX_PLAN.md).
+15. **Trace patches left in place** (env-guarded by `SOPIFY_TUI_TRACE=1`, zero overhead when off). Useful for any future PTY/Ink debugging — covers `entry.tsx`, `root.ts`, `ink.tsx`. To replay: set `SOPIFY_TUI_TRACE=1 SOPIFY_TUI_STUB=1 SOPIFY_TUI_SYNC=1` and grep for `[SOPIFY_TRACE]`.
 
-This is the SAME symptom we started with, except now all the underlying credential / mount / image issues are resolved. Which means the bug is **specifically in the chat tab's PTY chain or in how the slash_worker fails**, not in infrastructure.
+## 3. The chat-empty bug — diagnosis archive
 
-## 4. Things we have NOT verified yet
+**(Resolved by fix #14 above. Kept here so the next session can recognize
+the symptom if it ever returns under a different root cause.)**
 
-These are the next-step diagnostics the next session should focus on. **Do these BEFORE writing any more code.**
+Symptom: typing in /chat showed only the keystroke, no banner / no
+response. WebSocket was 101, PTY child alive, slash workers reached
+Anthropic — but Ink never painted a frame.
 
-### Verify the WebSocket actually opens
+Three red herrings we chased:
+- ❌ `HERMES_TUI_INLINE=1` empty-render — ruled out (same hang both ways)
+- ❌ `process.stdout.columns === 0` — was an artifact of my own
+  `pty.fork()` test; the real `PtyBridge` spawns with `dimensions=(24, 80)`
+- ❌ Ink's React reconciler stalling on Yoga WASM lazy init — the
+  `build.mjs` comment hinted at this, but the bug was upstream of the
+  reconciler
 
-Have the user open browser DevTools → Network → filter `WS` → click the `/chat` tab in the dashboard. Look for an `/api/pty` row.
+Real cause: `import { onExit } from 'signal-exit'` resolved to `undefined`
+because workspace hoisting installed v3 (default-export-only) at the
+top-level `node_modules` even though `@hermes/ink` declared v4. Calling
+`undefined(this.unmount, {...})` threw `TypeError` mid-constructor; the
+error was silently caught by the uncaughtException handler installed
+earlier in `entry.tsx`, leaving Ink half-built. The symptom was the
+empty xterm, not a visible crash.
 
-- **Status 101 Switching Protocols** = WebSocket opened successfully.
-- **Status 4401** = token mismatch (auth bug in our config).
-- **Status 4403** = `_ws_client_is_allowed` rejected the client (host binding issue).
-- **No row at all** = frontend never tried to connect (build issue).
-
-### Verify the PTY child is actually spawned
-
-While /chat tab is open in browser (don't close it):
-
-```bash
-SBOX=$(sbx ls | awk '/sopify-/ {print $1}')
-sbx exec $SBOX bash -lc 'ps auxf | grep -E "node|tui_gateway|slash_worker" | grep -v grep'
-```
-
-Expected, if PTY chain works:
-- `node /opt/sopify/ui-tui/dist/entry.js` (PTY-spawned by FastAPI)
-- `python -m tui_gateway.entry` (child of node)
-- `python -m tui_gateway.slash_worker --model anthropic/claude-...` (one per typed message)
-
-If `node entry.js` is MISSING → /api/pty handler isn't spawning it (server bug).
-If `node entry.js` is there but `tui_gateway.entry` isn't → node TUI crashed before gateway start.
-If all three are there but chat still empty → the slash_worker is running but failing silently. Look at HTTP requests to Anthropic.
-
-### Verify slash_worker actually calls Anthropic
-
-Inside the microVM, install tcpdump or use `strace` on the slash_worker to see if any outgoing HTTPS connection is attempted. If not, the worker is failing before the network call. If yes, check whether the response is being parsed correctly.
-
-### Earlier manual TUI spawn produced ONLY ANSI cleanup escapes
-
-When I ran `script -c "node /opt/sopify/ui-tui/dist/entry.js" /tmp/log` inside the microVM manually, the only output was a string of terminal-mode-reset escape codes (no banner, no UI). The process ran 3-4 seconds then exited cleanly (rc 0). **This is the smoking gun**, but I never got to root-cause it.
-
-Suspected reasons:
-- `gw.start()` spawns `python -m tui_gateway.entry` and waits on JSON-RPC handshake. If handshake fails, App component might unmount.
-- Ink in inline mode (HERMES_TUI_INLINE=1) might render nothing if some Ink-required env is missing.
-- `entry.tsx` line 18 checks `process.stdin.isTTY` and exits if false — but PTY DOES provide a TTY, so this should pass. (When the manual `script` was used without TTY allocation, it exited with "hermes-tui: no TTY" — different message, so the TTY check itself isn't the bug.)
+How we eventually saw it: `patchStderr()` in Ink's constructor replaces
+`process.stderr.write` with an interceptor that swallows its argument
+unless alt-screen is active. Our trace markers went silent the moment
+they crossed that line. Switching the helper to `writeSync(2, ...)` (raw
+fd write, bypasses the JS stream patch) made the next layer of traces
+visible — and pinpointed `onExit type=undefined` as the actual bug.
 
 ## 5. Known small remaining bugs
 
@@ -117,22 +120,30 @@ These are non-critical but should be fixed eventually:
 | :--- | :--- |
 | `SESSION_HANDOFF.md` (this file) | Pick-up doc |
 | `CHAT_FLOW_DEBUG.md` | Full 10-section debug write-up from yesterday |
+| `CHAT_RENDER_FIX_PLAN.md` | The signal-exit v3/v4 bug investigation + applied fix (today) |
+| `PROXY_FIX_PLAN.md` | Three approaches for the sbx proxy / API key contract |
 | `SOPIFY_ARCHITECTURE.md` | Stable architecture overview |
 | `ARCHITECTURE.md` | Hermes core architecture (do not edit — REQ-0.3) |
 | `DESIGN_ARCHITECTURE.md` | 12-section requirements spec |
-| `plugins/sopify_sandbox/sbx_launcher.py` | The host-side launcher that spawns sbx |
+| `plugins/sopify_sandbox/sbx_launcher.py` | Host-side launcher + Approach 1 no_proxy prologue |
 | `plugins/sopify_providers/auth_override.py` | Anthropic key resolution + the Read-only-fs fix |
+| `plugins/sopify_providers/providers_registry.py` | NEW — single source of truth for provider metadata |
+| `plugins/sopify_providers/sbx_secret.py` | NEW — host-only sbx secret store wrapper |
 | `plugins/sopify_providers/env_cli.py` | `sopify env set / list / unset` |
 | `plugins/sopify_providers/env_file.py` | Helper that reads/writes `~/.hermes/.env` |
 | `docker/sopify-sandbox/Dockerfile` | microVM image build |
 | `infra/sbx/sopify-kit/spec.yaml` | sbx kit (only `network.allowedDomains` is actually parsed) |
-| `hermes_cli/web_server.py` line 3402 | `/api/pty` WebSocket handler in Hermes |
-| `hermes_cli/main.py` line 1110 | `_make_tui_argv` — what gets spawned in the PTY |
-| `ui-tui/src/entry.tsx` | The Ink TUI entry; line 18 has `isTTY` exit guard |
+| `hermes_cli/web_server.py` | `/api/pty` WS handler + `/api/providers/api-key` REST endpoints |
+| `hermes_cli/main.py` | `_make_tui_argv` — what gets spawned in the PTY |
+| `ui-tui/src/entry.tsx` | Ink TUI entry; `[SOPIFY_TRACE]` markers gated by env var |
+| `ui-tui/packages/hermes-ink/src/ink/ink.tsx` | THE fix file — line 10 has the signal-exit compat shim |
+| `ui-tui/packages/hermes-ink/src/ink/root.ts` | `renderSync` trace markers (env-gated) |
+| `web/src/components/ApiKeyUploadCard.tsx` | NEW — the API key upload UI on /models |
+| `web/src/pages/ModelsPage.tsx` | Mounts ApiKeyUploadCard + Toast wiring |
 
-## 7. Unpushed git state at handoff time
+## 7. Unpushed git state
 
-Branch: `main`. Three commits ahead of `origin/main`:
+Branch: `main`. Three commits already ahead of `origin/main` from the morning:
 
 ```
 4bff94038 feat(providers): add `sopify env` subcommand for ~/.hermes/.env management
@@ -140,48 +151,85 @@ ab88994be feat(sandbox): pre-install TUI deps + mount ~/.hermes for credential p
 5a3b19013 feat(branding): surface-level Sopify rebrand + GS Battery logo
 ```
 
-Plus a fourth unstaged commit pending (the kit-symlink-via-launcher + duplicate-workspace skip + auth_override SOPIFY_IN_SANDBOX skip — all the post-push fixes).
+**Still unstaged at end-of-day:** the entire afternoon's work (fixes #11-15
+in §2). Suggested commit grouping when the user is ready:
 
-The user has the auto-classifier blocking `git push origin main` (default-branch protection), so they need to push themselves:
+```bash
+# Group A — proxy / key plumbing (Approach 1 + sbx_secret guard)
+git add plugins/sopify_sandbox/sbx_launcher.py \
+        plugins/sopify_providers/sbx_secret.py \
+        PROXY_FIX_PLAN.md
+
+# Group B — API Keys upload UI (Approach 3)
+git add plugins/sopify_providers/providers_registry.py \
+        hermes_cli/web_server.py \
+        web/src/lib/api.ts \
+        web/src/components/ApiKeyUploadCard.tsx \
+        web/src/pages/ModelsPage.tsx
+
+# Group C — THE chat fix (signal-exit v3/v4 compat shim)
+git add ui-tui/packages/hermes-ink/src/ink/ink.tsx \
+        CHAT_RENDER_FIX_PLAN.md
+
+# Group D — trace patches (env-guarded debugging hooks)
+git add ui-tui/src/entry.tsx \
+        ui-tui/packages/hermes-ink/src/ink/root.ts
+
+# Group E — handoff doc
+git add SESSION_HANDOFF.md
+```
+
+The user has the auto-classifier blocking `git push origin main`
+(default-branch protection), so they need to push themselves:
 ```bash
 cd ~/ai_engineer/gs/project-based/sopify/sopify-harness && git push origin main
 ```
 
-The fourth commit (today's fixes) still needs to be created. Use:
-```bash
-git add plugins/sopify_sandbox/sbx_launcher.py \
-        plugins/sopify_providers/auth_override.py \
-        infra/sbx/sopify-kit/spec.yaml \
-        SESSION_HANDOFF.md \
-        CHAT_FLOW_DEBUG.md
-```
-
 ## 8. Recommended FIRST action for the next session
 
-Do NOT touch any infra code yet. Run these three diagnostics first and report the results:
+Smoke-test that the fix survives a clean restart:
 
 ```bash
-# A. Browser DevTools — user does this themselves
-echo "Open browser → DevTools (F12) → Network → WS filter → click /chat tab → take screenshot of /api/pty row + Messages tab"
+# 1) Confirm sandbox + dashboard are alive
+SBOX=$(sbx ls | awk '/^sopify-/ {print $1}')
+curl -s -o /dev/null -w "dashboard HTTP %{http_code}\n" http://127.0.0.1:9119/
 
-# B. Process inspection while /chat is open
-SBOX=$(sbx ls | awk '/sopify-/ {print $1}')
-sbx exec $SBOX bash -lc 'ps auxf 2>/dev/null | grep -E "node|tui_gateway|slash_worker|sopify" | grep -v grep'
+# 2) Confirm the ink.tsx fix is deployed inside the microVM
+sbx exec "$SBOX" bash -lc '
+  grep -c "_signalExitNs" /opt/sopify/ui-tui/packages/hermes-ink/src/ink/ink.tsx
+  # Should print at least 1. If 0 → re-run sbx cp + `node scripts/build.mjs`.
+'
 
-# C. Anthropic API smoke test from INSIDE the microVM with the EXACT model the user picked
-sbx exec $SBOX bash -lc 'curl -s -w "HTTP:%{http_code}\n" -o /tmp/r.json \
-    -m 10 https://api.anthropic.com/v1/messages \
-    -H "anthropic-version: 2023-06-01" \
-    -H "x-api-key: $ANTHROPIC_API_KEY" \
-    -H "content-type: application/json" \
-    -d "{\"model\":\"claude-sonnet-4-5-20250929\",\"max_tokens\":10,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
-head -c 500 /tmp/r.json; rm -f /tmp/r.json'
+# 3) Browser test
+echo "Open http://127.0.0.1:9119/chat, type 'hello', expect banner + reply"
 ```
 
-The data from A + B + C will tell us EXACTLY where the chain breaks. Until then, every code fix is a guess.
+If chat is broken again with a different symptom, **don't** assume it's the
+same bug. Set `SOPIFY_TUI_TRACE=1 SOPIFY_TUI_STUB=1 SOPIFY_TUI_SYNC=1` and
+re-run the spawn-via-ptyprocess reproducer in
+[CHAT_RENDER_FIX_PLAN.md §6](CHAT_RENDER_FIX_PLAN.md#6-what-is-already-on-disk).
+The traces will tell you which layer is the new culprit in <30 seconds.
 
-## 9. Honest assessment of why this session failed
+## 9. Lessons learned
 
-I was firefighting one error at a time instead of running a single end-to-end diagnostic. Each fix was correct but the system needed all of them landed simultaneously. By the time the last fix landed, I'd lost track of whether the original symptom was caused by infra or by something deeper in the chat tab (Ink TUI, PTY bridge, or slash_worker).
+What worked this time (vs. the morning's firefighting):
 
-The next session should resist the urge to fix code. Start with the three diagnostics in §8 and only touch code after we have a concrete failure mode pinpointed.
+- **One end-to-end repro under the controlled environment** (Python
+  `ptyprocess.PtyProcess.spawn` mimicking the real `PtyBridge`) decoupled
+  "is the dashboard chain broken?" from "is Ink broken?" and let us
+  iterate on Ink in isolation in <5s per cycle.
+- **Trace markers that survive the framework's own output patching.**
+  Lesson: when a library claims to redirect stdio (Ink's `patchStderr`,
+  many test runners do similar), instrument via `writeSync(2, ...)` not
+  `process.stderr.write(...)`.
+- **Naming hypotheses + ruling them out one at a time.** The
+  `CHAT_RENDER_FIX_PLAN.md` "What we ruled out" table is now load-bearing
+  — every entry was a real wrong-turn that cost time, and writing them
+  down prevented re-checking on the next pivot.
+
+What didn't work the first time:
+- Assuming the symptom (blank chat) was a hang. It was a swallowed
+  TypeError. Different debug strategy.
+- Trusting that the package declared in `package.json` is the one
+  installed in `node_modules`. Workspace hoisting silently invalidates
+  this assumption.
