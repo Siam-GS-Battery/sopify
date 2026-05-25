@@ -1,0 +1,20 @@
+name: sopify-encm
+description: External Network Control Module — outbound proxy with protocol + domain enforcement
+version: 0.1.0
+requires:
+  - sopify-core
+  - sopify-sandbox
+provides:
+  - encm.proxy.http
+  - encm.proxy.mqtt
+  - encm.proxy.tcp
+  - encm.audit
+  - encm.ca
+req_traceability:
+  - REQ-1.2.1  # custom bridge → ENCM is the egress
+  - REQ-1.2.2  # default whitelist
+  - REQ-1.2.3  # new domain dialog (M2)
+  - REQ-1.2.5  # persist allow-always
+  - REQ-1.2.6  # IT pre-approve via managed settings
+  - REQ-1.2.7  # OTel emit on deny
+  - REQ-ENCM-M1  # this milestone

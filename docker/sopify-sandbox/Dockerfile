@@ -90,6 +90,13 @@ RUN cat > /usr/local/bin/sopify <<'WRAPPER_EOF' \
 exec /opt/sopify/.venv/bin/python /opt/sopify/sopify "$@"
 WRAPPER_EOF
 
+# CA installer removed 2026-05-24 — the MITM-proxy variant of ENCM is
+# archived under archive/2026-05-24-encm-mitm-attempt/. The new ENCM
+# Control Plane talks to sandboxd via API, not via a sandbox-side CA.
+#
+# (Comment trail for the line block that used to live below — kept so
+# `git log -S install-sopify-ca.sh` finds this removal in the future.)
+
 # Pre-declare mountpoints so sbx's bind-mount lands at expected paths.
 RUN mkdir -p /workspace /sopify-auth /sopify-config /sopify-sessions \
     && chown -R sopify:sopify /workspace /sopify-sessions /opt/sopify
