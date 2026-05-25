@@ -25,13 +25,17 @@ sys.path.insert(0, ROOT)
 
 
 def _show_banner(subtitle: str = "") -> None:
-    """Render the Sopify banner unless suppressed by $SOPIFY_NO_BANNER."""
+    """
+    Render the Sopify banner unless suppressed by $SOPIFY_NO_BANNER.
+    """
     try:
         from importlib import import_module
         banner = import_module("plugins.sopify_core.banner")
         banner.render(subtitle=subtitle)
     except Exception:
         pass  # never block a command on banner failure
+
+
 
 
 def _print_help() -> None:
@@ -41,6 +45,18 @@ def _print_help() -> None:
         "\n"
         "Easy mode (recommended for non-engineers):\n"
         "  sopify dashboard     open the web UI in your browser (chat there)\n"
+        "                       (add --no-browser for CI / SSH / headless)\n"
+        "\n"
+        "ENCM Control Plane (network rules over sbx):\n"
+        "  sopify start         run the daemon (FastAPI on 127.0.0.1:7777)\n"
+        "  sopify stop          stop the daemon\n"
+        "  sopify status        daemon + sandboxd + reconciler health\n"
+        "  sopify rules list    list ENCM rules\n"
+        "  sopify rules add <name> --pattern <p> [--decision allow|deny] ...\n"
+        "  sopify rules remove <name>\n"
+        "  sopify audit         tail audit log (24h by default)\n"
+        "  sopify reconcile     force an immediate reconciler tick\n"
+        "  sopify drift         list rules in sbx that ENCM doesn't track\n"
         "\n"
         "Host-only commands:\n"
         "  sopify install       one-shot setup (Docker pull + auth + config)\n"
@@ -164,6 +180,69 @@ def _preload_sopify_plugins() -> None:
                       file=sys.stderr)
 
 
+def _ensure_encm_daemon_running() -> None:
+    """Auto-start the ENCM daemon on the host so /network works.
+
+    The daemon talks to the host's sandboxd over a Unix socket — that file
+    only exists on the host, so the daemon stays on the host even though
+    the dashboard runs inside a microVM. The dashboard reaches the daemon
+    via ``host.docker.internal:7777`` (see hermes_cli/encm_client.py).
+
+    Skip when already running, when the user is offline-mode (SOPIFY_NO_SBX),
+    or when we're already inside a sandbox (the host-side launcher is the
+    one responsible for boot — a nested sbx exec would just no-op anyway).
+    Best-effort: we never block dashboard launch on a daemon hiccup.
+    """
+    if os.environ.get("SOPIFY_IN_SANDBOX") == "1":
+        return  # nested call from inside the microVM — host already handled this
+    if os.environ.get("SOPIFY_NO_ENCM") == "1":
+        return  # opt-out for users who don't want ENCM autostart
+
+    # Probe /health first — cheaper than parsing pid files. urllib is
+    # stdlib so this stays import-light.
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:7777/health", timeout=0.5) as resp:
+            if resp.status == 200:
+                return  # already up
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass  # not running — start it
+
+    # Spawn in a new session so it survives this shim's exit. Pipe stdio
+    # to a log file so the user can `tail -f ~/.sopify/daemon.log` if they
+    # need to debug, but the dashboard banner stays clean.
+    import subprocess
+    log_dir = os.path.expanduser("~/.sopify")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "daemon.log")
+    try:
+        with open(log_path, "ab") as logf:
+            subprocess.Popen(
+                [sys.executable, os.path.join(ROOT, "sopify"), "start"],
+                stdout=logf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                cwd=ROOT,
+            )
+    except OSError as exc:
+        print(f"sopify: failed to auto-start ENCM daemon: {exc}", file=sys.stderr)
+        return
+
+    # Wait briefly for the daemon to bind so the dashboard's first call
+    # finds it up. 3s is plenty (uvicorn startup is ~500ms here); past
+    # that we let the user see the daemon-down banner in /network rather
+    # than blocking dashboard boot.
+    import time
+    for _ in range(30):
+        time.sleep(0.1)
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:7777/health", timeout=0.2) as resp:
+                if resp.status == 200:
+                    return
+        except (urllib.error.URLError, TimeoutError, OSError):
+            continue
+
+
 def _cmd_dashboard(argv: list[str]) -> int:
     """sopify dashboard — open the web UI in a browser.
 
@@ -173,6 +252,20 @@ def _cmd_dashboard(argv: list[str]) -> int:
     the browser, no terminal commands needed.
     """
     _show_banner(subtitle="Dashboard — opening browser UI")
+
+    # ``--no-browser`` is the Sopify-side spelling of "headless launch" —
+    # used in CI / SSH / Codespaces where Chrome can't open. Strip it from
+    # the args forwarded to hermes (hermes uses ``--no-open``, which we
+    # add automatically below) and signal sbx_launcher via env var to
+    # suppress the host-side auto-open. Same spelling as Jupyter.
+    if "--no-browser" in argv:
+        os.environ["SOPIFY_NO_BROWSER"] = "1"
+        argv = [a for a in argv if a != "--no-browser"]
+
+    # Auto-start the ENCM daemon on the host before the sandbox boots so
+    # the /network page works immediately. Failures are non-fatal — the
+    # dashboard still launches and /network renders a daemon-down state.
+    _ensure_encm_daemon_running()
     # Auto-enable the in-browser Chat tab so the user can talk to Sopify
     # immediately. They can still pass --no-chat-pane explicitly.
     hermes_args = ["dashboard"] + argv
@@ -270,6 +363,32 @@ def main(argv: list[str]) -> int:
     if argv[1] in ("-V", "--version", "version"):
         return _cmd_version()
     sub = argv[1]
+    # ENCM Control Plane commands (SOPIFY_ENCM_SBX_INTEGRATION_PLAN.md).
+    # These hit the local daemon's REST API; the daemon itself runs via
+    # `sopify start`. CLI never reads YAML / talks to sandboxd directly.
+    encm_commands = {"start", "stop", "status", "rules", "audit", "reconcile", "drift"}
+    # Common typos that would otherwise fall through to the Hermes runtime
+    # (spawning a sandbox just to print "invalid choice"). Map them back
+    # to the canonical command so a slipped 's' doesn't burn 5s + an
+    # sbx container.
+    encm_typos = {
+        "rule": "rules",      # singular → plural
+        "auditing": "audit",
+        "drift-list": "drift",
+        "reconciler": "reconcile",
+    }
+    if sub in encm_commands:
+        from importlib import import_module
+        cli_mod = import_module("sopify_daemon.cli")
+        return cli_mod.dispatch([sub, *argv[2:]])
+    if sub in encm_typos:
+        print(
+            f"sopify: did you mean `sopify {encm_typos[sub]}`? "
+            f"(`{sub}` isn't a Sopify command — refusing to fall through "
+            f"to the Hermes runtime)",
+            file=sys.stderr,
+        )
+        return 2
     if sub == "install":
         return _cmd_install()
     if sub == "doctor":
@@ -296,6 +415,10 @@ def main(argv: list[str]) -> int:
     # Last resort — pass through to Hermes (for `sopify model`, `sopify plugins`,
     # etc. — anything the user might run that Hermes natively handles).
     return _delegate_to_hermes(argv[1:])
+
+
+
+
 
 
 if __name__ == "__main__":

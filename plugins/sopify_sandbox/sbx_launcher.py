@@ -32,6 +32,14 @@ from pathlib import Path
 from typing import List, Optional
 
 SBX_BINARY = "sbx"
+
+# SOPIFY_ENCM_SBX_INTEGRATION_PLAN.md §3 Week 1 — pin sbx to a tested range.
+# Lower bound: 0.24.0 = first version with the `policy` subcommand surface
+# our adapter targets. Upper bound: 0.30.0 = next pending breaking release
+# we haven't validated yet. Bump these intentionally + regenerate clients +
+# rerun contract tests.
+SBX_VERSION_MIN = "0.24.0"
+SBX_VERSION_MAX = "0.30.0"  # exclusive — `0.30.0` itself untested
 SANDBOX_PREFIX = "sopify"
 KIT_DIR_REL = "infra/sbx/sopify-kit"
 
@@ -143,32 +151,29 @@ def _remove_sandbox(name: str) -> None:
     )
 
 
-def _open_browser_when_ready(port: int, max_wait_seconds: int = 30) -> None:
-    """Open the host browser after FastAPI inside the microVM is reachable.
+def _open_browser_now(port: int) -> None:
+    """Launch the host browser at the published port. Caller has already
+    verified the dashboard answers HTTP — there's no more waiting here.
 
-    Sandbox publishes the port to the host immediately, but FastAPI takes
-    a few seconds to import deps + bind. Spin a daemon thread that polls
-    and opens the browser when the port answers. Falls back silently if
-    the wait expires or we're on a headless host.
+    WSL note: ``webbrowser.open`` often no-ops because xdg-open isn't
+    present; ``wslview`` (from ``wslu``) is the canonical way to punch
+    out to the Windows host, with ``cmd.exe /c start`` as a fallback.
     """
-    import socket
-    import threading
-    import time
     import webbrowser
 
-    def _wait_then_open():
-        url = f"http://127.0.0.1:{port}"
-        deadline = time.time() + max_wait_seconds
-        while time.time() < deadline:
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                    webbrowser.open(url)
-                    return
-            except OSError:
-                time.sleep(0.5)
-
-    threading.Thread(target=_wait_then_open, name="sopify-open-browser",
-                     daemon=True).start()
+    url = f"http://127.0.0.1:{port}"
+    if _is_wsl():
+        if shutil.which("wslview"):
+            if subprocess.call(["wslview", url],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL) == 0:
+                return
+        if shutil.which("cmd.exe"):
+            if subprocess.call(["cmd.exe", "/c", "start", "", url],
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL) == 0:
+                return
+    webbrowser.open(url)
 
 
 SOPIFY_IMAGE = "sopify-sandbox:latest"
@@ -205,25 +210,254 @@ def _ensure_sandbox(name: str, workspaces: List[str]) -> int:
     return subprocess.call(argv)
 
 
+def _is_wsl() -> bool:
+    """True when the launcher runs under WSL (any version).
+
+    Detect via the standard markers: WSL2 sets ``WSL_DISTRO_NAME`` /
+    ``WSL_INTEROP``; older WSL1 still produces ``Microsoft`` in
+    ``/proc/version``. Errors are non-fatal — when we can't tell, we
+    default to "not WSL" and keep the loopback-only bind.
+    """
+    if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+        return True
+    try:
+        with open("/proc/version", "r", encoding="utf-8") as f:
+            return "microsoft" in f.read().lower()
+    except OSError:
+        return False
+
+
+def _publish_bind_host() -> str:
+    """Pick the host IP to bind sbx-published ports to.
+
+    Default: ``127.0.0.1`` (loopback only — safest, matches what Jupyter
+    does out of the box). On WSL the Docker-published localhost ports
+    aren't reliably caught by WSL2's auto-forwarding, so the host browser
+    on Windows can't reach them; binding to ``0.0.0.0`` inside WSL fixes
+    that without changing the daemon's own bind (which stays loopback).
+
+    Override with ``SOPIFY_PUBLISH_HOST`` env var:
+      - ``127.0.0.1``  loopback only (default on macOS/Linux)
+      - ``0.0.0.0``    all interfaces (default on WSL, lets Windows reach)
+      - any IP         explicit interface
+    """
+    override = os.environ.get("SOPIFY_PUBLISH_HOST")
+    if override:
+        return override
+    if _is_wsl():
+        return "0.0.0.0"
+    return "127.0.0.1"
+
+
+def _sandbox_is_running(name: str) -> bool:
+    """Cheap status probe via ``sbx ls`` (~50ms). Used by the publish-when-
+    ready thread to time the publish against the main exec coming up."""
+    try:
+        r = subprocess.run(
+            [SBX_BINARY, "ls"], capture_output=True, text=True, timeout=3,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+    if r.returncode != 0:
+        return False
+    for line in r.stdout.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 3 and parts[0] == name:
+            return parts[2] == "running"
+    return False
+
+
+def _publish_ports_when_ready(
+    name: str,
+    ports: List[int],
+    *,
+    open_browser_on: Optional[int],
+    max_wait_seconds: int = 180,
+) -> None:
+    """Keep ports published until the dashboard actually answers HTTP.
+
+    sbx cycles the sandbox container between ``sbx exec`` calls — a publish
+    issued during our setup exec (link_hermes) gets silently cleared by
+    the time the main exec starts the dashboard process. The thread now
+    re-publishes on a cadence and verifies it stuck via an HTTP probe
+    against the published port from the host's side. Once a 2xx/3xx comes
+    back the dashboard is genuinely reachable and we hand off to the
+    browser-open helper.
+
+    Why HTTP-from-host (not just ``sbx ports`` listing): listing only tells
+    us our publish request was accepted at *some* point — sbx clears it on
+    container restart without notifying us. An HTTP round-trip from the
+    host is the only signal that confirms the chain
+    (host → docker port-proxy → sandbox network → hermes) is intact.
+    """
+    import threading
+    import time
+    import urllib.error
+    import urllib.request
+
+    if open_browser_on is not None:
+        print(
+            f"sopify: dashboard URL → http://127.0.0.1:{open_browser_on}",
+            file=sys.stderr,
+        )
+        sys.stderr.flush()
+
+    def _host_can_reach(port: int) -> bool:
+        """True when an HTTP request from the host to the published port
+        gets a real status line (not the Docker proxy hang)."""
+        for path in ("/health", "/"):
+            try:
+                with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}{path}", timeout=1.5
+                ) as resp:
+                    if 200 <= resp.status < 400:
+                        return True
+            except urllib.error.HTTPError as exc:
+                # FastAPI replied with 4xx/5xx → still proof of life.
+                if exc.code >= 400:
+                    return True
+            except (urllib.error.URLError, TimeoutError, OSError):
+                continue
+        return False
+
+    def _worker() -> None:
+        deadline = time.time() + max_wait_seconds
+        start = time.time()
+        next_progress = start + 5
+        last_publish_at = 0.0
+        announced_publish = False
+        attempts = 0
+        while time.time() < deadline:
+            attempts += 1
+            running = _sandbox_is_running(name)
+            if running:
+                # Re-publish at most every 3s. Each publish round-trips
+                # ``sbx ports --publish`` which costs ~100ms, so don't
+                # hammer; but do it often enough that a container cycle
+                # is corrected within seconds.
+                if time.time() - last_publish_at > 3.0:
+                    for p in ports:
+                        rc = _publish_port(name, p, p)
+                        if rc == 0 and not announced_publish:
+                            print(
+                                f"sopify: port {p} published to host "
+                                f"({_publish_bind_host()}:{p})",
+                                file=sys.stderr,
+                            )
+                            sys.stderr.flush()
+                            announced_publish = True
+                    last_publish_at = time.time()
+
+                if open_browser_on is not None and _host_can_reach(open_browser_on):
+                    elapsed = time.time() - start
+                    print(
+                        f"sopify: dashboard ready after {elapsed:.1f}s "
+                        f"({attempts} probes) — opening "
+                        f"http://127.0.0.1:{open_browser_on}",
+                        file=sys.stderr,
+                    )
+                    sys.stderr.flush()
+                    _open_browser_now(open_browser_on)
+                    return
+                if open_browser_on is None:
+                    # No browser to wait for; one publish round suffices.
+                    return
+
+            if time.time() >= next_progress:
+                elapsed = int(time.time() - start)
+                state = "running" if running else "starting"
+                print(
+                    f"sopify: still waiting ({elapsed}s, {attempts} probes) — "
+                    f"sandbox {state}, dashboard not responding yet",
+                    file=sys.stderr,
+                )
+                sys.stderr.flush()
+                next_progress = time.time() + 5
+            time.sleep(1.0)
+
+        print(
+            f"sopify: dashboard never responded after {max_wait_seconds}s — "
+            f"try `curl http://127.0.0.1:{open_browser_on or ports[0]}/` "
+            "and `sbx ports` to debug",
+            file=sys.stderr,
+        )
+
+    threading.Thread(target=_worker, name="sopify-publish-ports",
+                     daemon=True).start()
+
+    threading.Thread(target=_worker, name="sopify-publish-ports",
+                     daemon=True).start()
+
+
 def _publish_port(name: str, host_port: int, sbx_port: int) -> int:
-    """Publish a port. Returns rc (0 = ok, non-zero may mean already published)."""
-    return subprocess.call(
-        [SBX_BINARY, "ports", name, "--publish", f"{host_port}:{sbx_port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    """Publish a port. Returns rc (0 = ok, non-zero may mean already published).
+
+    Port spec ``HOST_IP:HOST_PORT:SANDBOX_PORT`` — see ``sbx ports --help``.
+    Bind interface is chosen by :func:`_publish_bind_host` (loopback-only
+    on macOS/Linux, all-interfaces on WSL).
+
+    sbx reaps the sandbox's container quickly between exec calls — if our
+    publish lands in the gap we get "no container endpoint with IP address
+    found" and the dashboard becomes unreachable. Retry briefly with an
+    ``sbx exec`` poke to revive the container; surface the final error
+    (no more silent failure) so users can see what went wrong.
+    """
+    bind_host = _publish_bind_host()
+    spec = f"{bind_host}:{host_port}:{sbx_port}"
+    last_stderr = ""
+    for attempt in range(3):
+        result = subprocess.run(
+            [SBX_BINARY, "ports", name, "--publish", spec],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            if attempt > 0:
+                print(
+                    f"sopify: published {spec} on attempt {attempt + 1}",
+                    file=sys.stderr,
+                )
+            return 0
+        last_stderr = (result.stderr or "").strip()
+        # "already published" is benign — the port is mapped, we're just
+        # restating it. The caller's HTTP probe is the real signal anyway.
+        if "already published" in last_stderr:
+            return 0
+        # "no container endpoint" = the sandbox's container has been
+        # reaped between exec calls. A noop exec brings it back; then
+        # retry the publish in the same tight window.
+        if "no container endpoint" in last_stderr and attempt < 2:
+            subprocess.run(
+                [SBX_BINARY, "exec", name, "true"],
+                capture_output=True, timeout=10,
+            )
+            continue
+        break
+    if last_stderr:
+        print(
+            f"sopify: failed to publish {spec}: {last_stderr}",
+            file=sys.stderr,
+        )
+    return 1
 
 
 def _link_hermes_into_sandbox(name: str) -> None:
-    """Symlink the mounted host ~/.hermes/.env into the sopify user's $HOME.
+    """Symlink the mounted host ~/.hermes/.env into the sopify user's $HOME
+    and (if mounted) re-link ``/usr/local/bin/sopify`` to the host's dev
+    repo so code edits are live without rebuilding the sandbox image.
 
     sbx kit schema v1 only parses `network.allowedDomains` — its `startup`
     block is silently ignored. So instead of relying on kit-time symlinking,
-    we run the link command via `sbx exec` right after sandbox creation
+    we run the link commands via ``sbx exec`` right after sandbox creation
     (before Hermes' env_loader reads the .env at dashboard launch).
 
-    The mount path inside the microVM is the host's absolute path (sbx
-    preserves it). Probe the standard macOS / Linux home locations and
-    link the first match into the sopify user's $HOME/.hermes/.
+    **Dev-mode override (sopify symlink):** the spec.yaml startup expects
+    the dev repo at ``/workspaces/sopify-app/`` and falls back to the baked
+    ``/opt/sopify/`` when missing. sbx, however, mounts workspaces at the
+    *host's* absolute path (not at ``/workspaces/...``), so the fallback
+    always wins — meaning host edits to ``hermes_cli/`` or ``web_dist/``
+    never reach the running dashboard until the sandbox image is rebuilt.
+    Probe each mounted workspace for a ``sopify`` executable and re-link
+    ``/usr/local/bin/sopify`` to it when found, falling back to ``/opt``.
     """
     script = r"""
 mkdir -p "$HOME/.hermes"
@@ -240,6 +474,26 @@ if [ -n "$hermes_src" ]; then
       ln -sf "$hermes_src/$f" "$HOME/.hermes/$f"
     fi
   done
+fi
+
+# Dev-mode override decision is taken at exec-time inside ``inner_cmd``
+# below, not here — the sopify user has no write access to
+# /usr/local/bin so we can't rewrite the baked wrapper. Just record the
+# detected path so the user sees what's going on.
+dev_sopify=""
+for candidate in \
+    /Users/*/ai_engineer/*/project-based/sopify/sopify-harness/sopify \
+    /Users/*/sopify/sopify-harness/sopify \
+    /Users/*/sopify-harness/sopify \
+    /home/*/sopify-harness/sopify \
+    /workspaces/sopify-app/sopify; do
+  if [ -x "$candidate" ]; then
+    dev_sopify="$candidate"
+    break
+  fi
+done
+if [ -n "$dev_sopify" ]; then
+  echo "sopify: dev-mode detected → $dev_sopify" >&2
 fi
 """
     subprocess.run(
@@ -296,6 +550,20 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     hermes_home = Path.home() / ".hermes"
     if hermes_home.is_dir() and hermes_home.resolve() != cwd_resolved:
         workspaces.append(f"{hermes_home}:ro")
+    # ~/.sopify/ holds the daemon's bearer token + port (config.yaml). The
+    # dashboard's ENCM proxy (hermes_cli/encm_client.py) reads it to forward
+    # /api/encm/* to the daemon on the host at 127.0.0.1:7777. Without this
+    # mount the proxy returns 503 "config not found" and the /network page
+    # falls into its daemon-down empty state. Read-only is enough — the
+    # daemon, which writes this file, runs on the host, not in the microVM.
+    sopify_home = Path.home() / ".sopify"
+    if sopify_home.is_dir() and sopify_home.resolve() != cwd_resolved:
+        workspaces.append(f"{sopify_home}:ro")
+    # ENCM CA mount intentionally removed (2026-05-24) — the MITM-proxy
+    # variant of ENCM is archived under archive/2026-05-24-encm-mitm-attempt/.
+    # The new ENCM Control Plane talks to sbx's sandboxd API instead of
+    # injecting a CA, so the sandbox no longer needs a Sopify-issued trust
+    # anchor.
     if _sandbox_exists(sandbox) and _image_exists() and not _sandbox_has_sopify(sandbox):
         # Stale sandbox from before --template support landed. Recreate.
         print(f"sopify: recreating sandbox '{sandbox}' with sopify-sandbox template...",
@@ -312,17 +580,28 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     #     parses network.allowedDomains), so we run the symlink ourselves.
     _link_hermes_into_sandbox(sandbox)
 
-    # 2. Publish each requested port.
+    # 2. Defer port publishing to a background thread that fires AFTER the
+    #    main ``sbx exec`` boots the container. Doing it here-and-now sees
+    #    the container in the brief gap between our setup exec and the
+    #    dashboard exec — sbx reaps that container and clears any earlier
+    #    publish state, so the dashboard would start with no port mapped.
+    #
+    #    The thread polls ``sbx ls`` for ``running`` (which the main exec
+    #    drives a moment later), publishes, then triggers browser auto-open
+    #    once the published port answers. Errors are surfaced to stderr —
+    #    silent failure here was the GHSA-class bug that left users staring
+    #    at "Connection refused" with no clue why.
     if publish_ports:
-        for p in publish_ports:
-            _publish_port(sandbox, p, p)  # ignore rc — already-published returns non-zero
-
-    # 2b. When launching the dashboard, open the host browser to the
-    #     published port after a short delay so FastAPI inside the microVM
-    #     has time to bind. The microVM is started with --no-open so the
-    #     browser-open responsibility lives here on the host.
-    if publish_ports and 9119 in publish_ports:
-        _open_browser_when_ready(9119)
+        _publish_ports_when_ready(
+            sandbox,
+            publish_ports,
+            open_browser_on=(
+                9119
+                if 9119 in publish_ports
+                and os.environ.get("SOPIFY_NO_BROWSER") != "1"
+                else None
+            ),
+        )
 
     # 3. Build inner command — invoke sopify wrapper (set up by kit's startup
     #    script as /usr/local/bin/sopify) with the user's argv.
@@ -338,11 +617,76 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     #    processes (FastAPI → node PTY → tui_gateway → slash_worker) inherit
     #    a working configuration. auth_override.apply() then pulls the real
     #    ANTHROPIC_TOKEN from ~/.hermes/.env (sentinel triggers fallback).
+    # Force truecolor terminal capability inside the microVM. sbx exec -it
+    # allocates a PTY but ships TERM=dumb by default, which makes rich set
+    # color_system=None — the banner mascot then renders in monochrome even
+    # though the host terminal supports 24-bit color end-to-end.
+    # ENCM proxy-chain env exports removed 2026-05-24 — see
+    # SOPIFY_ENCM_SBX_INTEGRATION_PLAN.md §1.2 for why the custom-proxy
+    # approach is dead. The new ENCM Control Plane runs as a host-side
+    # FastAPI daemon talking to sandboxd via Unix socket; no proxy env
+    # vars are injected into the sandbox process itself.
+    # Dev-mode runtime resolution: prefer the mounted host repo's sopify
+    # over the baked /opt/sopify so code edits land without rebuilding the
+    # sandbox image. The Linux venv from /opt/sopify is reused — the host's
+    # (macOS) .venv would refuse to run inside the microVM.
+    #
+    # We compute the dev path inline so that:
+    #   - permission isn't an issue (no /usr/local/bin rewrites)
+    #   - falling back to /usr/local/bin/sopify is automatic
+    #   - the user sees ``sopify: dev-mode active …`` when it kicks in
+    sopify_argv = " ".join(_shellquote(a) for a in argv)
     inner_cmd = (
+        "export COLORTERM=truecolor; "
+        "export TERM=xterm-256color; "
+        # Pin Python to the Sopify venv so any subprocess (in particular
+        # the TUI's ``python -m tui_gateway.entry`` child, spawned with
+        # ``stdio: pipe`` rather than a login shell) picks up the
+        # installed deps — ``dotenv``, ``rich``, etc. The default PATH
+        # inside the microVM is ``/usr/local/bin:/usr/bin:/bin`` and
+        # does NOT contain ``/opt/sopify/.venv/bin``, so a bare
+        # ``python3`` falls back to system Python which is missing every
+        # package and the gateway crashes with ModuleNotFoundError before
+        # ever emitting ``gateway.ready``. Pinning ``HERMES_PYTHON``
+        # plus prepending the venv to ``PATH`` covers both the TUI
+        # spawn path and any other ``python``-by-name shell-outs.
+        "export HERMES_PYTHON=/opt/sopify/.venv/bin/python3; "
+        "export PATH=/opt/sopify/.venv/bin:$PATH; "
+        # Enable gateway-lifecycle trace logging so the chat tab's
+        # "gateway exited" bug leaves a paper trail in stderr (visible
+        # via the dashboard PTY mirror and ~/.hermes/logs/agent.log).
+        # See ui-tui/src/gatewayClient.ts ``_trace()``.
+        "export SOPIFY_TUI_TRACE=1; "
         f"export no_proxy={_shellquote(_AI_NO_PROXY)}; "
         f"export NO_PROXY={_shellquote(_AI_NO_PROXY)}; "
         'if [ "$ANTHROPIC_API_KEY" = "proxy-managed" ]; then unset ANTHROPIC_API_KEY; fi; '
-        "/usr/local/bin/sopify " + " ".join(_shellquote(a) for a in argv)
+        # Resolve dev sopify path. ``set -- <glob>`` expands; ``$1`` is the
+        # first match (empty if no match because nullglob isn't on).
+        "DEV_SOPIFY=''; "
+        "for c in "
+        "/Users/*/ai_engineer/*/project-based/sopify/sopify-harness/sopify "
+        "/Users/*/sopify/sopify-harness/sopify "
+        "/Users/*/sopify-harness/sopify "
+        "/home/*/sopify-harness/sopify "
+        "/workspaces/sopify-app/sopify; do "
+        '  if [ -x "$c" ]; then DEV_SOPIFY="$c"; break; fi; '
+        "done; "
+        # When running the dev sopify from a host-mounted repo, the
+        # ui-tui/node_modules belongs to the host platform (macOS) and
+        # esbuild's prebuilt binaries refuse to execute inside the Linux
+        # microVM. Skip the in-sandbox esbuild step by pointing
+        # HERMES_TUI_DIR at the host-built ``dist/entry.js`` — hermes_cli
+        # picks the prebuilt branch and never invokes node_modules/.
+        'if [ -n "$DEV_SOPIFY" ]; then '
+        '  DEV_ROOT="$(dirname "$DEV_SOPIFY")"; '
+        '  if [ -f "$DEV_ROOT/ui-tui/dist/entry.js" ]; then '
+        '    export HERMES_TUI_DIR="$DEV_ROOT/ui-tui"; '
+        '    echo "sopify: HERMES_TUI_DIR=$HERMES_TUI_DIR (skipping in-sandbox esbuild)" >&2; '
+        '  fi; '
+        '  echo "sopify: dev-mode active → $DEV_SOPIFY" >&2; '
+        f'  exec /opt/sopify/.venv/bin/python "$DEV_SOPIFY" {sopify_argv}; '
+        "fi; "
+        f"exec /usr/local/bin/sopify {sopify_argv}"
     )
 
     # `sbx run SANDBOX -- ...` passes args to the SHELL AGENT itself (which
@@ -368,6 +712,34 @@ def _shellquote(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
+def _parse_semver(v: str) -> tuple[int, int, int] | None:
+    """Best-effort semver tuple extraction. Returns None for non-semver
+    strings rather than raising — doctor must remain non-fatal."""
+    import re
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", v)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def _version_in_range(detected: str) -> tuple[bool, str]:
+    """True iff `detected` is within [SBX_VERSION_MIN, SBX_VERSION_MAX).
+
+    Returns (ok, friendly_reason) so doctor can surface why the version
+    failed without reimplementing the comparison logic.
+    """
+    det = _parse_semver(detected)
+    lo = _parse_semver(SBX_VERSION_MIN)
+    hi = _parse_semver(SBX_VERSION_MAX)
+    if det is None or lo is None or hi is None:
+        return True, "version unparseable, skipping range check"
+    if det < lo:
+        return False, f"too old (need ≥ {SBX_VERSION_MIN})"
+    if det >= hi:
+        return False, f"too new (untested, max < {SBX_VERSION_MAX})"
+    return True, "in supported range"
+
+
 def status_summary() -> str:
     """Used by `sopify doctor` — one-line status of sbx readiness."""
     if not is_available():
@@ -378,9 +750,19 @@ def status_summary() -> str:
         # 2.5s — sbx version can be slow on cold daemon, especially first
         # call of the session. Still under the doctor 3s gate via parallelism.
         v = subprocess.check_output([SBX_BINARY, "version"], text=True, timeout=2.5)
+        client_ver = ""
         for line in v.splitlines():
             if "Client Version" in line:
-                return f"sbx OK ({line.split(':',1)[1].strip().split()[0]})"
-        return "sbx OK"
+                client_ver = line.split(":", 1)[1].strip().split()[0]
+                break
+        if not client_ver:
+            return "sbx OK"
+        # `sbx version` may report "v0.29.0" or "0.29.0" depending on the
+        # release tag style — normalise so the doctor row reads cleanly.
+        normalised = client_ver.lstrip("vV")
+        ok, why = _version_in_range(normalised)
+        if not ok:
+            return f"sbx v{normalised} — {why}"
+        return f"sbx OK (v{normalised})"
     except Exception as exc:
         return f"sbx error: {exc}"
