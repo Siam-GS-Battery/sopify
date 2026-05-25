@@ -1,0 +1,22 @@
+# ENCM container deps. Exact-pinned to match sopify-harness/pyproject.toml's
+# discipline (no ranges = no supply-chain surprises on rebuild).
+#
+# Why these and not the harness's full deps:
+#   - ENCM is a single-purpose proxy. It doesn't need anthropic/openai SDKs,
+#     ptyprocess, prompt_toolkit, etc.
+#   - Smaller image = faster cold pulls + smaller attack surface.
+
+# Pydantic — schema validation
+pydantic==2.13.4
+pydantic-core==2.46.4
+
+# Cryptography — CA cert generation
+cryptography==48.0.0
+
+# mitmproxy — HTTP/HTTPS/WS layer-7 proxy.
+# 12.2.3 is the latest at design time; supports cryptography 42..48.1 so it
+# pairs cleanly with our 48.0.0 pin. Bump together if either side moves.
+mitmproxy==12.2.3
+
+# Optional but useful at runtime
+httpx==0.28.1
