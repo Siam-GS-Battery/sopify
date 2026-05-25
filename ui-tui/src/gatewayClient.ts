@@ -237,6 +237,7 @@ export class GatewayClient extends EventEmitter {
   }
 
   private handleTransportExit(code: null | number, reason?: string) {
+    this._trace(`handleTransportExit code=${code} reason=${reason ?? '(none)'} stack=${new Error().stack?.split('\n').slice(1, 4).join(' | ')}`)
     this.clearReadyTimer()
     this.closeSidecarSocket()
     this.rejectPending(new Error(reason || `gateway exited${code === null ? '' : ` (${code})`}`))
@@ -323,7 +324,22 @@ export class GatewayClient extends EventEmitter {
 
     env.PYTHONPATH = pyPath ? `${root}${delimiter}${pyPath}` : root
     this.startReadyTimer(python, cwd)
+    this._trace(`startSpawnedGateway python=${python} cwd=${cwd} PYTHONPATH=${env.PYTHONPATH}`)
     this.proc = spawn(python, ['-m', 'tui_gateway.entry'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+    this._trace(`spawn pid=${this.proc.pid} stdin=${!!this.proc.stdin} stdout=${!!this.proc.stdout}`)
+
+    // Watch stdin for unexpected closes — when this fires before the TUI
+    // calls kill(), we know something inside Node is auto-ending the
+    // pipe to the gateway and we need to find that path.
+    this.proc.stdin?.on('close', () => {
+      this._trace(`!! proc.stdin 'close' event fired (pid=${this.proc?.pid}, killed=${this.proc?.killed})`)
+    })
+    this.proc.stdin?.on('error', (err: Error) => {
+      this._trace(`!! proc.stdin 'error' event: ${err.message}`)
+    })
+    this.proc.stdin?.on('end', () => {
+      this._trace(`!! proc.stdin 'end' event fired`)
+    })
 
     this.stdoutRl = createInterface({ input: this.proc.stdout! })
     this.stdoutRl.on('line', raw => {
@@ -332,6 +348,7 @@ export class GatewayClient extends EventEmitter {
       } catch {
         const preview = raw.trim().slice(0, MAX_LOG_PREVIEW) || '(empty line)'
 
+        this._trace(`stdout (non-JSON): ${preview}`)
         this.pushLog(`[protocol] malformed stdout: ${preview}`)
         this.publish({ type: 'gateway.protocol_error', payload: { preview } })
       }
@@ -345,6 +362,7 @@ export class GatewayClient extends EventEmitter {
         return
       }
 
+      this._trace(`stderr: ${line}`)
       this.pushLog(line)
       this.publish({ type: 'gateway.stderr', payload: { line } })
     })
@@ -356,6 +374,7 @@ export class GatewayClient extends EventEmitter {
         return
       }
 
+      this._trace(`proc.on('error') fired: ${err.message}`)
       const line = `[spawn] ${err.message}`
 
       this.pushLog(line)
@@ -370,6 +389,7 @@ export class GatewayClient extends EventEmitter {
       this.handleTransportExit(1, `gateway error: ${err.message}`)
     })
     this.proc.on('exit', code => {
+      this._trace(`proc.on('exit') fired code=${code} isStale=${this.proc !== ownedProc} stdinDestroyed=${ownedProc.stdin?.destroyed} stdinWritable=${ownedProc.stdin?.writable}`)
       // start() can replace `this.proc` while an old child is still
       // tearing down. Skip stale exits so we don't clear the new
       // startup timer or reject newly-issued pending requests.
@@ -537,6 +557,43 @@ export class GatewayClient extends EventEmitter {
     this.logs.push(truncateLine(line))
   }
 
+  // Always-on tracing for the gateway-exited investigation. Writes the
+  // labelled line three ways so we can find it regardless of where the
+  // TUI's stdio ends up routed:
+  //   1. stderr — visible in the dashboard PTY transcript / chat tab
+  //   2. internal log ring — surfaced by /logs
+  //   3. append to ~/.hermes/logs/gateway_client_trace.log — survives
+  //      across TUI process restarts, easy to grep from any terminal
+  // Gated on ``SOPIFY_TUI_TRACE=1`` so production runs stay quiet.
+  private _trace(label: string) {
+    if (process.env.SOPIFY_TUI_TRACE !== '1') return
+    const stamp = new Date().toISOString()
+    const line = `[GW_TRACE ${stamp.slice(11, 23)} pid=${process.pid}] ${label}`
+    try {
+      process.stderr.write(line + '\n')
+    } catch {
+      // stderr can be closed during shutdown; never let trace logging
+      // crash the gateway investigation it's trying to help with.
+    }
+    this.pushLog(`[gw-trace] ${label}`)
+    try {
+      // Synchronous append — diagnostics matter more here than perf.
+      // The path matches Hermes' standard logs dir so users find it
+      // alongside ``agent.log`` and ``tui_gateway_crash.log``.
+      const home = process.env.HOME || process.env.USERPROFILE || '/tmp'
+      const fs = require('node:fs') as typeof import('node:fs')
+      const path = require('node:path') as typeof import('node:path')
+      const dir = path.join(home, '.hermes', 'logs')
+      fs.mkdirSync(dir, { recursive: true })
+      fs.appendFileSync(
+        path.join(dir, 'gateway_client_trace.log'),
+        `${stamp} pid=${process.pid} ${label}\n`,
+      )
+    } catch {
+      // Filesystem errors must not break the gateway investigation.
+    }
+  }
+
   private rejectPending(err: Error) {
     for (const p of this.pending.values()) {
       clearTimeout(p.timeout)
@@ -687,6 +744,7 @@ export class GatewayClient extends EventEmitter {
   }
 
   kill() {
+    this._trace(`kill() called stack=${new Error().stack?.split('\n').slice(1, 4).join(' | ')}`)
     this.proc?.kill()
     this.closeGatewaySocket()
     this.closeSidecarSocket()
