@@ -20,7 +20,7 @@ import { composerPromptText } from '../lib/prompt.js'
 import { AgentsOverlay } from './agentsOverlay.js'
 import { GoodVibesHeart, StatusRule, StickyPromptTracker, TranscriptScrollbar } from './appChrome.js'
 import { FloatingOverlays, PromptZone } from './appOverlays.js'
-import { Banner, Panel, SessionPanel } from './branding.js'
+import { Banner, Panel, SessionPanel, SopifyInfoPanel } from './branding.js'
 import { FpsOverlay } from './fpsOverlay.js'
 import { HelpHint } from './helpHint.js'
 import { MessageLine } from './messageLine.js'
@@ -113,9 +113,9 @@ const TranscriptPane = memo(function TranscriptPane({
               {row.msg.kind === 'intro' ? (
                 <Box flexDirection="column" paddingTop={1}>
                   <Banner t={ui.theme} />
-                  {/* SessionPanel intentionally hidden in Sopify inline TUI —
-                      it duplicates info already in the dashboard sidebar
-                      (model, session, tools, skills). Set
+                  <SopifyInfoPanel info={row.msg.info} t={ui.theme} />
+                  {/* SessionPanel (dynamic model/tools/skills) stays hidden —
+                      it duplicates the dashboard sidebar. Set
                       SOPIFY_SHOW_SESSION_PANEL=1 to bring it back. */}
                   {row.msg.info && process.env.SOPIFY_SHOW_SESSION_PANEL === '1' && (
                     <SessionPanel info={row.msg.info} sid={ui.sid} t={ui.theme} />

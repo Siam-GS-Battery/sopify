@@ -12,20 +12,18 @@ import sys
 from . import version
 
 # Pixel rhino mascot — Sopify cyan/teal palette with pink ears.
-SOPIFY_CADUCEUS = r'''[#164E63]    ████            ████    [/]
-[#164E63]  ██[/][#22D3EE]████[/][#164E63]██        ██[/][#22D3EE]████[/][#164E63]██  [/]
-[#164E63]██[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]████████[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]████████████████████████[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]██████████[/][#0891B2]████[/][#67E8F9]██████████[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]████████[/][#0891B2]████████[/][#67E8F9]████████[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]██████[/][#0891B2]████████████[/][#67E8F9]██████[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]████[/][#164E63]██[/][#67E8F9]████████████[/][#164E63]██[/][#67E8F9]████[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]████████████████████████[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]██[/][#F9A8D4]████[/][#67E8F9]████████████[/][#F9A8D4]████[/][#67E8F9]██[/][#164E63]██[/]
-[#164E63]██[/][#67E8F9]██[/][#F9A8D4]████[/][#67E8F9]████████████[/][#F9A8D4]████[/][#67E8F9]██[/][#164E63]██[/]
-[#164E63]██[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#67E8F9]████████[/][#22D3EE]██[/][#67E8F9]████[/][#22D3EE]██[/][#164E63]██[/]
-[#164E63]  ████████        ████████  [/]
-[#164E63]    ████            ████    [/]'''
+# Half-block compressed (7 rows × 14 cols, was 14×28) — each ▀/▄ encodes two
+# vertical pixels via foreground (top) + background (bottom) so the full
+# 5-color palette is preserved at a quarter of the original footprint.
+SOPIFY_CADUCEUS = (
+    " [#164E63]▄[/][#164E63 on #22D3EE]▀▀[/][#164E63]▄[/]    [#164E63]▄[/][#164E63 on #22D3EE]▀▀[/][#164E63]▄[/] \n"
+    "[#164E63]█[/][#22D3EE on #67E8F9]▀[/][#67E8F9]██[/][#22D3EE on #67E8F9]▀[/][#164E63 on #67E8F9]▀▀▀▀[/][#22D3EE on #67E8F9]▀[/][#67E8F9]██[/][#22D3EE on #67E8F9]▀[/][#164E63]█[/]\n"
+    "[#164E63]█[/][#67E8F9]████[/][#67E8F9 on #0891B2]▀[/][#0891B2]██[/][#67E8F9 on #0891B2]▀[/][#67E8F9]████[/][#164E63]█[/]\n"
+    "[#164E63]█[/][#67E8F9]██[/][#67E8F9 on #164E63]▀[/][#0891B2 on #67E8F9]▀▀▀▀▀▀[/][#67E8F9 on #164E63]▀[/][#67E8F9]██[/][#164E63]█[/]\n"
+    "[#164E63]█[/][#67E8F9]█[/][#67E8F9 on #F9A8D4]▀▀[/][#67E8F9]██████[/][#67E8F9 on #F9A8D4]▀▀[/][#67E8F9]█[/][#164E63]█[/]\n"
+    "[#164E63]█[/][#67E8F9 on #22D3EE]▀[/][#F9A8D4 on #67E8F9]▀▀[/][#67E8F9 on #22D3EE]▀[/][#67E8F9]████[/][#67E8F9 on #22D3EE]▀[/][#F9A8D4 on #67E8F9]▀▀[/][#67E8F9 on #22D3EE]▀[/][#164E63]█[/]\n"
+    " [#164E63]▀██▀[/]    [#164E63]▀██▀[/] "
+)
 
 SOPIFY_WORDMARK = r'''[bold #67E8F9]      ___           ___           ___                 [/]
 [bold #67E8F9]     /\  \         /\  \         /\  \          ___   [/]
@@ -60,8 +58,8 @@ def _strip_rich(s: str) -> str:
     return re.sub(r"\[/?[^\]]+\]", "", s)
 
 
-def _hex_to_ansi(hex_color: str) -> str:
-    """Convert a `#rrggbb` string into a 24-bit ANSI foreground sequence."""
+def _hex_to_ansi(hex_color: str, *, bg: bool = False) -> str:
+    """Convert a `#rrggbb` string into a 24-bit ANSI fg (38) or bg (48) sequence."""
     hex_color = hex_color.lstrip("#")
     if len(hex_color) == 3:
         hex_color = "".join(c * 2 for c in hex_color)
@@ -73,21 +71,25 @@ def _hex_to_ansi(hex_color: str) -> str:
         b = int(hex_color[4:6], 16)
     except ValueError:
         return ""
-    return f"\x1b[38;2;{r};{g};{b}m"
+    base = 48 if bg else 38
+    return f"\x1b[{base};2;{r};{g};{b}m"
 
 
 def _render_rich_ansi(markup: str, color_on: bool) -> str:
-    """Render rich-style markup (`[bold #rrggbb]text[/]`) to ANSI escape codes.
+    """Render rich-style markup (`[bold #rrggbb on #rrggbb]text[/]`) to ANSI.
 
-    Used by the Rich-less fallback so multi-segment art keeps its per-segment
-    palette instead of collapsing to one flat color.
+    Supports an optional `on #rrggbb` background segment so the half-block
+    mascot keeps its per-pixel-pair palette instead of dropping background
+    color in non-Rich terminals.
     """
     import re
 
     global _RICH_TAG_RE
     if _RICH_TAG_RE is None:
         _RICH_TAG_RE = re.compile(
-            r"\[(bold\s+)?(?:dim\s+)?(#(?:[0-9a-fA-F]{3,8}))\]([\s\S]*?)\[/\]"
+            r"\[(bold\s+)?(?:dim\s+)?(#(?:[0-9a-fA-F]{3,8}))"
+            r"(?:\s+on\s+(#(?:[0-9a-fA-F]{3,8})))?"
+            r"\]([\s\S]*?)\[/\]"
         )
 
     if not color_on:
@@ -98,9 +100,10 @@ def _render_rich_ansi(markup: str, color_on: bool) -> str:
 
     def repl(m: "re.Match[str]") -> str:
         bold = bool(m.group(1))
-        ansi = _hex_to_ansi(m.group(2))
-        text = m.group(3)
-        prefix = (BOLD if bold else "") + ansi
+        fg = _hex_to_ansi(m.group(2))
+        bg = _hex_to_ansi(m.group(3), bg=True) if m.group(3) else ""
+        text = m.group(4)
+        prefix = (BOLD if bold else "") + fg + bg
         return f"{prefix}{text}{RESET}"
 
     return _RICH_TAG_RE.sub(repl, markup)

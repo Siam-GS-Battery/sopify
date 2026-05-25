@@ -7,6 +7,8 @@ import { flat } from '../lib/text.js'
 import type { Theme } from '../theme.js'
 import type { PanelSection, SessionInfo } from '../types.js'
 
+const BANNER_MASCOT_GAP = 2
+
 const LOADER_TICK_MS = 120
 
 function InlineLoader({ label, t }: { label: string; t: Theme }) {
@@ -32,8 +34,8 @@ export function ArtLines({ lines }: { lines: Row[] }) {
     <>
       {lines.map((row, i) => (
         <Text key={i}>
-          {row.map(([c, text], j) => (
-            <Text color={c || undefined} key={j}>
+          {row.map(([c, text, bg], j) => (
+            <Text backgroundColor={bg || undefined} color={c || undefined} key={j}>
               {text}
             </Text>
           ))}
@@ -58,6 +60,59 @@ export function Banner({ t }: { t: Theme }) {
       )}
 
       <Text color={t.color.muted}>{t.brand.icon} GS Battery · AI agent with org governance</Text>
+    </Box>
+  )
+}
+
+// SopifyInfoPanel — mascot + version + tagline + subtitle + REQ list,
+// mirroring the CLI host banner panel. Static branding identity shown
+// below the wordmark on `intro` messages; not session-dependent.
+const SOPIFY_TAGLINE = 'AI agent + sandbox + 3 modes + org governance'
+const SOPIFY_SUBTITLE = 'Dashboard — opening browser UI'
+const SOPIFY_REQ_LINES = [
+  'REQ-0 foundation │ REQ-1 sandbox │ REQ-2 providers',
+  'REQ-6 guardrails │ REQ-7 OTel    │ REQ-8 skills',
+  'REQ-3/4/5 modes  │ REQ-9 mgmt    │ REQ-10 TUI',
+]
+
+export function SopifyInfoPanel({ info, t }: { info?: SessionInfo; t: Theme }) {
+  const cols = useStdout().stdout?.columns ?? 80
+  const heroLines = caduceus(t.color, t.bannerHero || undefined)
+  const mascotWidth = artWidth(heroLines) || CADUCEUS_WIDTH
+  // Side-by-side mascot + info needs ~60 cols for the REQ lines to fit.
+  // Narrower panes stack the info below the mascot.
+  const wide = cols >= mascotWidth + 60
+
+  const versionLabel = info?.version
+    ? `sopify ${info.version}${info.release_date ? ` (runtime ${info.release_date})` : ''}`
+    : 'sopify'
+
+  return (
+    <Box borderColor={t.color.border} borderStyle="round" flexDirection="column" marginBottom={1} paddingX={2} paddingY={1}>
+      <Box justifyContent="center" marginBottom={1}>
+        <Text bold color={t.color.primary}>
+          {t.brand.icon} Sopify {t.brand.icon}
+        </Text>
+      </Box>
+      <Box flexDirection={wide ? 'row' : 'column'}>
+        <Box flexDirection="column" marginRight={wide ? BANNER_MASCOT_GAP : 0}>
+          <ArtLines lines={heroLines} />
+        </Box>
+        <Box flexDirection="column">
+          <Text>
+            <Text bold color={t.color.primary}>{t.brand.icon}</Text>
+            <Text color={t.color.text}> {versionLabel}</Text>
+          </Text>
+          <Text> </Text>
+          <Text color={t.color.accent}>{SOPIFY_TAGLINE}</Text>
+          <Text> </Text>
+          <Text bold color={t.color.primary}>{SOPIFY_SUBTITLE}</Text>
+          <Text> </Text>
+          {SOPIFY_REQ_LINES.map((line, i) => (
+            <Text color={t.color.muted} key={i}>{line}</Text>
+          ))}
+        </Box>
+      </Box>
     </Box>
   )
 }

@@ -353,6 +353,15 @@ button:focus-visible {
   animation: sopify-save-fade-out 220ms ease-in forwards;
 }
 
+/* Floating rhino mascot — empty-state on Sessions when there's nothing yet. */
+@keyframes sopify-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.animate-float {
+  animation: sopify-float 3s ease-in-out infinite;
+}
+
 /* Override Clerk avatar if the consumer mounts Clerk components */
 .cl-userButtonAvatarBox,
 .cl-avatarBox,

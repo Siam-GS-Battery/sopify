@@ -35,7 +35,6 @@ import { timeAgo } from "@/lib/utils";
 import { Markdown } from "@/components/Markdown";
 import { PlatformsCard } from "@/components/PlatformsCard";
 import { Toast } from "@/components/Toast";
-import { BrandHero } from "@/components/BrandHero";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { ListItem } from "@nous-research/ui/ui/components/list-item";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
@@ -790,12 +789,19 @@ export default function SessionsPage() {
             </>
           ) : (
             <>
-              <BrandHero
-                tagline={t.sessions.startConversation}
-                className="mb-2"
+              <img
+                src="/rhino-icon.png"
+                alt="Sopify"
+                width={120}
+                height={120}
+                className="animate-float [image-rendering:pixelated] select-none"
+                draggable={false}
               />
-              <p className="text-sm font-medium mt-4">
+              <p className="text-sm font-medium mt-6">
                 {t.sessions.noSessions}
+              </p>
+              <p className="text-xs text-muted-foreground/80 mt-1">
+                {t.sessions.startConversation}
               </p>
             </>
           )}
