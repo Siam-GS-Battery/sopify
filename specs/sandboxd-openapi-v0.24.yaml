@@ -1,0 +1,247 @@
+# Sandboxd HTTP API — hand-written mini-spec.
+#
+# Background:
+#   sbx daemon does NOT publish an OpenAPI spec at any well-known path
+#   (verified 2026-05-24 — /openapi.json, /docs, /swagger all 404).
+#   Boss chose option (a): hand-write a mini-spec from GET probes + Docker
+#   docs at https://docs.docker.com/ai/sandboxes/security/policy/ + the
+#   `sbx policy` CLI subcommand surface.
+#
+# Contract risk: sbx may rename, add, or remove fields between releases.
+# The Sopify install pins sbx to [0.24.0, 0.30.0). When that range moves,
+# Boss should re-validate this spec and the generated client. The contract
+# test suite is the early warning system.
+#
+# Verified by probing /Users/burased.b/Library/Application Support/com.docker.sandboxes/sandboxes/sandboxd/sandboxd.sock:
+#   GET /policy/rules → 200, schema confirmed below
+#   POST /version → 200 (version handshake; payload was empty so server
+#                        returned {"result":"incompatible"})
+#   GET /sandbox → 501 (recognized path, not implemented)
+#   /openapi.json, /docs, /swagger → all 404
+#
+# POST/DELETE/PUT shapes for /policy/rules are inferred from the `sbx policy
+# allow` and `sbx policy deny` CLI surface — they must be validated against
+# real sandboxd traffic before the contract test suite is signed off.
+
+openapi: 3.1.0
+info:
+  title: Docker Sandboxes daemon (sandboxd) API
+  version: "0.24.0"
+  description: |
+    Local Unix-socket HTTP API exposed by the `sandboxd` daemon shipped with
+    Docker Sandbox. Sopify treats this as the data-plane integration point
+    for the ENCM Control Plane (see SOPIFY_ENCM_SBX_INTEGRATION_PLAN.md).
+  contact:
+    name: Sopify ENCM team (Burased B.)
+  license:
+    name: Sopify-internal — derived from public sbx CLI surface
+servers:
+  - url: http+unix://%2FUsers%2F<USER>%2FLibrary%2FApplication%20Support%2Fcom.docker.sandboxes%2Fsandboxes%2Fsandboxd%2Fsandboxd.sock
+    description: macOS — Unix socket path (URL-escaped)
+  - url: http+unix:///run/sandboxd.sock
+    description: Linux (predicted — Docker may diverge from this path)
+
+paths:
+  /version:
+    post:
+      summary: Client-server version handshake
+      description: |
+        Returns a result indicator. Empty body produces `incompatible`;
+        the spec for compatible inputs is unknown — current callers don't
+        depend on this beyond a liveness check.
+      operationId: version
+      responses:
+        "200":
+          description: Handshake result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result:
+                    type: string
+                    enum: [compatible, incompatible]
+
+  /policy/rules:
+    get:
+      summary: List policy rules
+      description: |
+        Returns every rule sandboxd is currently enforcing across all scopes
+        (`global`, per-sandbox). The reconciler hits this endpoint each tick
+        to compute drift vs the ENCM YAML files.
+      operationId: list_policy_rules
+      responses:
+        "200":
+          description: List of rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rules]
+                properties:
+                  rules:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PolicyRule"
+    post:
+      summary: Create a policy rule
+      description: |
+        Add a new allow/deny rule. Successful return includes the assigned
+        `id` so the reconciler can record the handle in `.state/sync.yaml`.
+      operationId: create_policy_rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PolicyRuleSpec"
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PolicyRule"
+        "400":
+          description: Invalid rule (e.g. malformed pattern, conflicting scope)
+        "409":
+          description: A rule with the same `name` + `scope` already exists
+
+  /policy/rules/{rule_id}:
+    parameters:
+      - in: path
+        name: rule_id
+        schema: { type: string }
+        required: true
+    delete:
+      summary: Remove a policy rule
+      operationId: delete_policy_rule
+      responses:
+        "204": { description: Removed }
+        "404": { description: Not found }
+
+  /policy/log:
+    get:
+      summary: Stream policy decisions
+      description: |
+        Server-sent stream (`Transfer-Encoding: chunked`, one JSON object
+        per line) of every allow/deny decision sbx makes. The audit
+        ingester tails this endpoint and writes enriched JSONL to
+        `~/.sopify/encm/audit/YYYY-MM-DD.jsonl`.
+      operationId: tail_policy_log
+      parameters:
+        - in: query
+          name: since
+          schema:
+            type: string
+            format: date-time
+          description: ISO-8601 timestamp; only return events at or after this time
+        - in: query
+          name: follow
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Streaming JSONL of `AuditEvent` objects
+          content:
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/AuditEvent"
+
+components:
+  schemas:
+    PolicyRule:
+      type: object
+      required: [id, name, resource_type, decision, resources, status]
+      properties:
+        id:
+          type: string
+          description: Server-assigned unique handle; the reconciler stores this
+        name:
+          type: string
+          description: Operator-facing slug (e.g. `allow-npm-ecosystem`)
+        resource_type:
+          type: string
+          enum: [network, file, env, mount]
+          description: |
+            Sopify only writes `network`. Other types may appear in sandboxd
+            output but are out of scope for ENCM v1.
+        decision:
+          type: string
+          enum: [allow, deny]
+        resources:
+          type: array
+          items: { type: string }
+          description: |
+            Targets the decision applies to. For `network`: hostnames or
+            wildcard patterns (`*.npmjs.org`) or `IP:PORT`. For `**` =
+            match-all (sbx default rule uses this).
+        scope:
+          type: string
+          enum: [global, sandbox]
+          default: global
+        sandbox_id:
+          type: string
+          nullable: true
+          description: Required when `scope=sandbox`
+        origin:
+          type: string
+          enum: [local, organization, default]
+          description: |
+            `local` = created by this user; `organization` = pushed by IT
+            policy (Docker Business). ENCM surfaces an org-precedence
+            warning in the UI when present.
+        status:
+          type: string
+          enum: [active, pending, error]
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: Free-form key/value pairs, mirrored from ENCM metadata
+
+    PolicyRuleSpec:
+      type: object
+      required: [name, resource_type, decision, resources]
+      properties:
+        name: { type: string }
+        resource_type: { type: string, enum: [network] }
+        decision: { type: string, enum: [allow, deny] }
+        resources:
+          type: array
+          minItems: 1
+          items: { type: string }
+        scope: { type: string, enum: [global, sandbox], default: global }
+        sandbox_id: { type: string, nullable: true }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+
+    AuditEvent:
+      type: object
+      description: |
+        One row of the sandboxd policy decision log. ENCM enriches each
+        event with `rule_name` + `created_by` before writing to JSONL.
+      required: [ts, sandbox_id, host, decision]
+      properties:
+        ts:
+          type: string
+          format: date-time
+        sandbox_id: { type: string }
+        host:
+          type: string
+          description: |
+            For HTTP/HTTPS — hostname. For raw TCP — `IP:PORT`.
+        port: { type: integer }
+        decision: { type: string, enum: [allow, deny] }
+        rule_id:
+          type: string
+          nullable: true
+          description: Sandboxd's handle of the matching rule (or null if default-deny)
+        proxy_mode:
+          type: string
+          enum: [forward, transparent, bypass]
+          description: |
+            How sbx routed the request. `forward` = via the gateway proxy
+            (HTTP/HTTPS visible); `transparent` = TCP forward (host:port
+            only); `bypass` = unproxied (no inspection — surfaced as a UI
+            warning when present).
