@@ -4675,6 +4675,41 @@ async def serve_plugin_asset(plugin_name: str, file_path: str):
     )
 
 
+# ---------------------------------------------------------------------------
+# ENCM proxy — forwards /api/encm/<path> to the local Sopify daemon at
+# 127.0.0.1:7777/api/v1/<path>. The dashboard keeps its existing
+# X-Hermes-Session-Token auth; the bearer secret stays server-side. See
+# hermes_cli/encm_client.py and SOPIFY_ENCM_SBX_INTEGRATION_PLAN.md §1.5.
+# ---------------------------------------------------------------------------
+
+
+@app.api_route(
+    "/api/encm/{daemon_path:path}",
+    methods=["GET", "POST", "PUT", "DELETE"],
+)
+async def proxy_encm(daemon_path: str, request: Request):
+    from hermes_cli.encm_client import proxy as encm_proxy
+
+    query = dict(request.query_params) or None
+    body: Optional[Any] = None
+    if request.method in ("POST", "PUT", "DELETE"):
+        ct = request.headers.get("content-type", "")
+        if "application/json" in ct:
+            raw = await request.body()
+            if raw:
+                try:
+                    body = json.loads(raw.decode("utf-8"))
+                except (ValueError, UnicodeDecodeError):
+                    raise HTTPException(400, detail="invalid JSON body")
+
+    status_code, payload = await encm_proxy(
+        request.method, daemon_path, query=query, body=body
+    )
+    if status_code == 204:
+        return Response(status_code=204)
+    return JSONResponse(content=payload, status_code=status_code)
+
+
 def _mount_plugin_api_routes():
     """Import and mount backend API routes from plugins that declare them.
 
