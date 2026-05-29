@@ -5413,6 +5413,11 @@ async def vibe_get_project(name: str, request: Request):
         "project": marker,
         "path": str(d),
         "requirements_md": _read_if_exists(d / "REQUIREMENTS.md"),
+        "design_md": _read_if_exists(d / "DESIGN.md"),
+        "database_md": _read_if_exists(d / "DATABASE.md"),
+        "api_md": _read_if_exists(d / "API.md"),
+        # Retained so the legacy 3-pane UI keeps compiling; new 6-phase
+        # projects do not write PLANNING.md, so this is null for them.
         "planning_md": _read_if_exists(d / "PLANNING.md"),
         "security_review_md": _read_if_exists(d / "SECURITY_REVIEW.md"),
     }
