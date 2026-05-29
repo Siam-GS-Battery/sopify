@@ -13,7 +13,7 @@ export default function VirtualOfficePage() {
             mondwest
             className="font-bold text-[1.1rem] tracking-[0.05em] uppercase text-midground"
           >
-            Virtual Office
+            Dashboard
           </Typography>
           <p className="mt-1 text-xs text-muted-foreground">
             Placeholder — feature content lands here.
