@@ -52,4 +52,5 @@ default system stack.
 The user can click through the dev-server preview, see every screen with
 representative placeholder data, and the chrome / typography / spacing
 match what they expect. When they click **Approve design**, the gate
-advances to `database` and the data layer begins.
+advances to `backend` — schema, API, and frontend wiring all happen
+inside that single next phase.

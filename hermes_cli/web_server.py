@@ -5315,15 +5315,27 @@ async def vibe_create_project(body: VibeProjectCreate, request: Request):
 
 # Ordered phase machine. The frontend stepper renders these in this order
 # and downstream phase-advance endpoints can validate transitions against it.
+#
+# Six phases, each with a matching `prompts/vibe/phases/<name>.md` that the
+# system-prompt composer injects when the project is at that phase. Two
+# phases (design, security) also pre-load a vendored skill — see
+# `_VIBE_PHASE_SKILLS` below.
 _VIBE_PHASES: list[str] = [
-    "brainstorm",
-    "requirements",
-    "planning",
-    "development",
-    "improvement",
-    "security",
-    "approve",
+    "brainstorm",   # chat → REQUIREMENTS.md
+    "design",       # chat + iframe → DESIGN.md, frontend-design skill loaded
+    "backend",      # chat → DATABASE.md + API.md, agent stands up Supabase + wiring
+    "improvement",  # chat → free iteration / polish
+    "security",     # claude-code-security-review skill → SECURITY_REVIEW.md
+    "approve",      # done state — summary view, no agent activity
 ]
+
+# Skills auto-injected into the system prompt when the project is in the
+# matching phase. The SKILL.md body is inlined so the agent has the
+# methodology in scope without an extra `skill_view` round-trip.
+_VIBE_PHASE_SKILLS: dict[str, tuple[str, ...]] = {
+    "design": ("frontend-design",),
+    "security": ("red-teaming/claude-code-security-review",),
+}
 
 
 def _vibe_project_dir(name: str) -> Path:
@@ -5407,13 +5419,18 @@ async def vibe_get_project(name: str, request: Request):
 
 
 def _vibe_compose_system_prompt(marker: dict) -> str:
-    """Concatenate base + mode + selected add-ons from prompts/vibe/ into a
-    single system prompt string. Missing files are silently skipped so a
-    minimal install still works."""
+    """Concatenate the system prompt for a vibe project's current phase.
+
+    Order: project preamble → base → mode → add-ons → phase skill(s) → phase.
+    The phase prompt is last so its immediate-action guidance is freshest
+    in the agent's attention. Missing files are silently skipped so a
+    minimal install still works.
+    """
     parts: list[str] = []
     project_name = marker.get("name", "")
     mode = marker.get("mode", "")
     add_ons = marker.get("add_ons", []) or []
+    phase = marker.get("phase", "brainstorm")
 
     if project_name:
         project_dir = _VIBE_PROJECTS_ROOT / project_name
@@ -5421,9 +5438,10 @@ def _vibe_compose_system_prompt(marker: dict) -> str:
             f"# Project: {project_name}\n\n"
             f"**Project folder:** `{project_dir}`\n\n"
             f"All files for this project — including `REQUIREMENTS.md`, "
-            f"`PLANNING.md`, source code, etc. — live under that absolute "
-            f"path. Use it directly when reading or writing project files; "
-            f"do not assume the current working directory.\n"
+            f"`DESIGN.md`, `DATABASE.md`, `API.md`, source code, etc. — "
+            f"live under that absolute path. Use it directly when reading "
+            f"or writing project files; do not assume the current working "
+            f"directory.\n"
         )
 
     base = _VIBE_PROMPTS_DIR / "base.md"
@@ -5438,6 +5456,16 @@ def _vibe_compose_system_prompt(marker: dict) -> str:
         f = _VIBE_PROMPTS_DIR / "add-ons" / f"{addon}.md"
         if f.is_file():
             parts.append(f.read_text(encoding="utf-8").rstrip())
+
+    for skill_rel in _VIBE_PHASE_SKILLS.get(phase, ()):
+        skill_file = PROJECT_ROOT / "skills" / skill_rel / "SKILL.md"
+        if skill_file.is_file():
+            body = skill_file.read_text(encoding="utf-8").rstrip()
+            parts.append(f"## Pre-loaded skill: `{skill_rel}`\n\n{body}")
+
+    phase_file = _VIBE_PROMPTS_DIR / "phases" / f"{phase}.md"
+    if phase_file.is_file():
+        parts.append(phase_file.read_text(encoding="utf-8").rstrip())
 
     return "\n\n".join(parts).strip() + "\n"
 
