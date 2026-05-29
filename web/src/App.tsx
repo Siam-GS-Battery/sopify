@@ -150,7 +150,7 @@ const BUILTIN_NAV_REST: NavItem[] = [
   },
   {
     path: "/virtual-office",
-    label: "Virtual Office",
+    label: "Dashboard",
     icon: Briefcase,
   },
   {
@@ -276,8 +276,8 @@ function buildNavItems(
  * upstream in buildNavItems and never reach this partition.
  */
 const EVERYDAY_NAV_ORDER: readonly string[] = [
-  "/vibe-code", // flagship AI-DLC entry — see SPECIFICATION_ADD_ON_FLOW.md.
   "/virtual-office",
+  "/vibe-code", // flagship AI-DLC entry — see SPECIFICATION_ADD_ON_FLOW.md.
   "/panel",
   "/sessions",
   "/files",
