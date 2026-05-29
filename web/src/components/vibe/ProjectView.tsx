@@ -9,6 +9,7 @@ import {
   Check,
   Loader2,
   RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -62,7 +63,14 @@ function phaseToStepKey(phase: VibePhase): VibeStepKey {
 const PROJECT_DONE_KEYS: VibeStepKey[] = ["name", "theme", "addons"];
 
 export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
-  const { project, requirements_md, design_md, database_md, api_md } = data;
+  const {
+    project,
+    requirements_md,
+    design_md,
+    database_md,
+    api_md,
+    security_review_md,
+  } = data;
 
   const stepperKey = phaseToStepKey(project.phase);
   const doneKeys = useMemo<VibeStepKey[]>(() => {
@@ -114,10 +122,23 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
               onRefresh={onRefresh}
             />
           )}
-          {(project.phase === "improvement" ||
-            project.phase === "security" ||
-            project.phase === "approve") && (
-            <BuildingPane project={project} />
+          {project.phase === "improvement" && (
+            <ImprovementPane
+              project={project}
+              onUpdated={onUpdated}
+              onRefresh={onRefresh}
+            />
+          )}
+          {project.phase === "security" && (
+            <SecurityPane
+              project={project}
+              initialReport={security_review_md ?? ""}
+              onUpdated={onUpdated}
+              onRefresh={onRefresh}
+            />
+          )}
+          {project.phase === "approve" && (
+            <DonePane data={data} />
           )}
         </div>
       </div>
@@ -1093,10 +1114,13 @@ function BackendPane({
   );
 }
 
-// ── Building (development) ───────────────────────────────────────────────────
+// ── Shared split helpers ─────────────────────────────────────────────────────
 
-// Resizable split between chat (left) and live-preview (right). Mirrors the
-// pattern used by /panel — same keys/limits so the muscle memory carries over.
+// Resizable split between chat (left) and live-preview / artifact pane
+// (right). Mirrors the pattern used by /panel — same key/limits so the
+// muscle memory carries over. Shared across DesignPane, BackendPane, and
+// ImprovementPane so the user's preferred ratio sticks through every
+// phase that has a preview.
 const SPLIT_STORAGE_KEY = "sopify:vibeBuildChatPct";
 const SPLIT_DEFAULT = 55;
 const SPLIT_MIN = 15;
@@ -1104,29 +1128,48 @@ const SPLIT_MAX = 85;
 const clampSplit = (pct: number) =>
   Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, pct));
 
-// Sent once when the user lands on Building. ChatPanel's existing
-// kickoff machinery suppresses it if the session already has turns,
-// so re-entering an in-progress build doesn't re-prompt the agent.
-const BUILDING_KICKOFF_PROMPT =
-  "PLANNING.md is approved. Start coding now. Follow PLANNING.md step-by-step, " +
-  "obey the sopify-sdlc skill standards (TypeScript strict, Tailwind utilities, " +
-  "MVC layering, parameterized SQL, loading/error/empty states everywhere). " +
-  "When you start a dev server use `--host 0.0.0.0` so the Live preview can reach " +
-  "it. Tell me when each milestone in PLANNING.md is done so I can review.";
+// ── Improvement ─────────────────────────────────────────────────────────────
 
-function BuildingPane({ project }: { project: VibeProjectMarker }) {
+/**
+ * Improvement is the free-iteration phase: the app is wired and live,
+ * and the user iterates with the agent on polish / tweaks / small
+ * features / bug fixes / accessibility. Chat is fully open; the agent
+ * waits for the user's next directive rather than running an agenda.
+ *
+ * The kickoff is intentionally short — per the phase prompt, "no
+ * kickoff agenda from the system" — it just signals the phase change
+ * so the agent doesn't keep operating in backend mode.
+ */
+const IMPROVEMENT_KICKOFF_PROMPT =
+  "Phase is now IMPROVEMENT — free iteration. The app is wired and " +
+  "live; wait for the user's next directive (polish, tweaks, small " +
+  "features, bug fixes, accessibility, copy edits). Keep changes " +
+  "scoped to what they ask for; the sopify-sdlc conventions still " +
+  "apply to every change.";
+
+function ImprovementPane({
+  project,
+  onUpdated,
+  onRefresh,
+}: {
+  project: VibeProjectMarker;
+  onUpdated: (m: VibeProjectMarker) => void;
+  onRefresh: () => void;
+}) {
   const [reloadKey, setReloadKey] = useState(0);
   const [devServers, setDevServers] = useState<
     { port: number; url: string }[]
   >([]);
+  const [err, setErr] = useState<string | null>(null);
+  const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
+
   const currentServer = devServers[0];
   const previewSrc = useMemo(
     () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
     [currentServer, reloadKey],
   );
 
-  // Resizable split: only active at lg+; below that the panes stack and
-  // the iframe is given a fixed-ish height via aspect.
+  // Resizable split — same wiring as Design / Backend.
   const isStacked = useBelowBreakpoint(1024);
   const splitRef = useRef<HTMLDivElement>(null);
   const draggingRef = useRef(false);
@@ -1135,12 +1178,14 @@ function BuildingPane({ project }: { project: VibeProjectMarker }) {
     const raw = Number(window.localStorage.getItem(SPLIT_STORAGE_KEY));
     return Number.isFinite(raw) && raw > 0 ? clampSplit(raw) : SPLIT_DEFAULT;
   });
-
   useEffect(() => {
     try {
-      window.localStorage.setItem(SPLIT_STORAGE_KEY, String(Math.round(chatPct)));
+      window.localStorage.setItem(
+        SPLIT_STORAGE_KEY,
+        String(Math.round(chatPct)),
+      );
     } catch {
-      // localStorage unavailable — ignore.
+      /* localStorage unavailable — ignore. */
     }
   }, [chatPct]);
 
@@ -1151,7 +1196,6 @@ function BuildingPane({ project }: { project: VibeProjectMarker }) {
     if (rect.width === 0) return;
     setChatPct(clampSplit(((clientX - rect.left) / rect.width) * 100));
   }, []);
-
   const onDividerPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -1191,10 +1235,6 @@ function BuildingPane({ project }: { project: VibeProjectMarker }) {
     [],
   );
   const resetSplit = useCallback(() => setChatPct(SPLIT_DEFAULT), []);
-
-  // When no dev server is detected, hide the preview pane entirely and let
-  // the chat take the full row. Once detected, fall back to the persisted
-  // split ratio.
   const chatStyle = isStacked || !previewSrc
     ? undefined
     : { flexGrow: chatPct, flexBasis: 0 };
@@ -1202,94 +1242,408 @@ function BuildingPane({ project }: { project: VibeProjectMarker }) {
     ? undefined
     : { flexGrow: 100 - chatPct, flexBasis: 0 };
 
-  return (
-    <div
-      ref={splitRef}
-      className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-0"
-    >
-      <div
-        style={chatStyle}
-        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-      >
-        <ChatPanel
-          project={project}
-          header="Building"
-          kickoff={BUILDING_KICKOFF_PROMPT}
-          onDevServersChange={setDevServers}
-        />
-      </div>
+  const onApprove = useCallback(async () => {
+    setAdvancing("approve");
+    setErr(null);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        phase: "security",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvancing(null);
+    }
+  }, [project.name, onUpdated, onRefresh]);
 
-      {previewSrc ? (
-        /* Drag handle — desktop only; matches /panel UX. Hidden when no
-         * preview is up so chat takes the full row. */
+  const onReject = useCallback(async () => {
+    setAdvancing("reject");
+    setErr(null);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        phase: "backend",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvancing(null);
+    }
+  }, [project.name, onUpdated, onRefresh]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div
+        ref={splitRef}
+        className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-0"
+      >
         <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize chat and preview panes"
-          aria-valuemin={SPLIT_MIN}
-          aria-valuemax={SPLIT_MAX}
-          aria-valuenow={Math.round(chatPct)}
-          tabIndex={0}
-          onPointerDown={onDividerPointerDown}
-          onPointerMove={onDividerPointerMove}
-          onPointerUp={onDividerPointerUp}
-          onKeyDown={onDividerKeyDown}
-          onDoubleClick={resetSplit}
-          className={cn(
-            "group hidden shrink-0 cursor-col-resize touch-none items-stretch lg:flex",
-            "mx-1 w-1.5 select-none focus-visible:outline-none",
-          )}
-          title="Drag to resize · double-click to reset"
+          style={chatStyle}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
         >
-          <span
-            aria-hidden
-            className={cn(
-              "m-auto h-10 w-1 rounded-full bg-border/70 transition-colors",
-              "group-hover:bg-midground/60 group-focus-visible:bg-midground/80",
-            )}
+          <ChatPanel
+            project={project}
+            header="Improvement"
+            kickoff={IMPROVEMENT_KICKOFF_PROMPT}
+            onDevServersChange={setDevServers}
           />
         </div>
-      ) : null}
 
-      {previewSrc ? (
-        <aside
-          style={previewStyle}
-          className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/60 bg-background-base/40 lg:flex-1"
-          aria-label="Live preview"
-        >
-          <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3">
-            <Typography
-              mondwest
-              className="text-[0.75rem] tracking-[0.1em] uppercase text-muted-foreground"
-            >
-              Live preview
-            </Typography>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                {currentServer?.url}
-              </span>
-              <Button
-                ghost
-                size="icon"
-                aria-label="Reload preview"
-                onClick={() => setReloadKey((k) => k + 1)}
+        {previewSrc ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize chat and preview panes"
+            aria-valuemin={SPLIT_MIN}
+            aria-valuemax={SPLIT_MAX}
+            aria-valuenow={Math.round(chatPct)}
+            tabIndex={0}
+            onPointerDown={onDividerPointerDown}
+            onPointerMove={onDividerPointerMove}
+            onPointerUp={onDividerPointerUp}
+            onKeyDown={onDividerKeyDown}
+            onDoubleClick={resetSplit}
+            className={cn(
+              "group hidden shrink-0 cursor-col-resize touch-none items-stretch lg:flex",
+              "mx-1 w-1.5 select-none focus-visible:outline-none",
+            )}
+            title="Drag to resize · double-click to reset"
+          >
+            <span
+              aria-hidden
+              className={cn(
+                "m-auto h-10 w-1 rounded-full bg-border/70 transition-colors",
+                "group-hover:bg-midground/60 group-focus-visible:bg-midground/80",
+              )}
+            />
+          </div>
+        ) : null}
+
+        {previewSrc ? (
+          <aside
+            style={previewStyle}
+            className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/60 bg-background-base/40 lg:flex-1"
+            aria-label="Live preview"
+          >
+            <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3">
+              <Typography
+                mondwest
+                className="text-[0.75rem] tracking-[0.1em] uppercase text-muted-foreground"
               >
-                <RefreshCw className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </header>
-          <iframe
-            key={previewSrc}
-            src={previewSrc}
-            title={`${project.name} preview`}
-            className="min-h-0 flex-1 border-0"
-            sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
-          />
-        </aside>
-      ) : null}
+                Live preview
+              </Typography>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
+                  {currentServer?.url}
+                </span>
+                <Button
+                  ghost
+                  size="icon"
+                  aria-label="Reload preview"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </header>
+            <iframe
+              key={previewSrc}
+              src={previewSrc}
+              title={`${project.name} preview`}
+              className="min-h-0 flex-1 border-0"
+              sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
+            />
+          </aside>
+        ) : null}
+      </div>
+
+      <div className="shrink-0 flex flex-col gap-2 rounded-lg border border-border/60 bg-background-base/40 px-4 py-3">
+        {err && (
+          <div className="flex items-start gap-2 text-xs text-destructive">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{err}</span>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={onApprove}
+            disabled={advancing !== null}
+            className="gap-2"
+          >
+            {advancing === "approve" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            <span>Approve → Security</span>
+          </Button>
+          <Button
+            ghost
+            onClick={onReject}
+            disabled={advancing !== null}
+            className="gap-2"
+          >
+            {advancing === "reject" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowLeft className="h-4 w-4" />
+            )}
+            <span>Back to Backend</span>
+          </Button>
+          <span className="text-[0.7rem] text-muted-foreground/60">
+            When the app feels right, approve to run the security review.
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
+
+// ── Security ────────────────────────────────────────────────────────────────
+
+/**
+ * Security pane runs the claude-code-security-review skill against the
+ * project and shows the resulting markdown report. There is no chat here
+ * — the skill produces a single report, the user reads it, then either
+ * approves through to Done or rolls back to Improvement to fix issues.
+ *
+ * The endpoint backing the Run button currently writes a placeholder
+ * report (see `_vibe_security_review` in web_server.py). A follow-up
+ * PR will replace the stub with a real agent spawn that loads the
+ * vendored skill at `skills/red-teaming/claude-code-security-review/`.
+ */
+function SecurityPane({
+  project,
+  initialReport,
+  onUpdated,
+  onRefresh,
+}: {
+  project: VibeProjectMarker;
+  initialReport: string;
+  onUpdated: (m: VibeProjectMarker) => void;
+  onRefresh: () => void;
+}) {
+  const [report, setReport] = useState(initialReport);
+  const [running, setRunning] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
+
+  const onRun = useCallback(async () => {
+    setRunning(true);
+    setErr(null);
+    try {
+      const res = await api.runVibeSecurityReview(project.name);
+      setReport(res.report);
+      onUpdated(res.project);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  }, [project.name, onUpdated]);
+
+  const onApprove = useCallback(async () => {
+    setAdvancing("approve");
+    setErr(null);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        phase: "approve",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvancing(null);
+    }
+  }, [project.name, onUpdated, onRefresh]);
+
+  const onReject = useCallback(async () => {
+    setAdvancing("reject");
+    setErr(null);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        phase: "improvement",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvancing(null);
+    }
+  }, [project.name, onUpdated, onRefresh]);
+
+  const hasReport = report.trim().length > 0;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-background-base/40">
+        <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-4">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            SECURITY_REVIEW.md
+          </span>
+          <div className="flex items-center gap-2">
+            <Badge tone={hasReport ? "success" : "secondary"}>
+              {hasReport ? "report ready" : "not run"}
+            </Badge>
+            <Button
+              size="sm"
+              onClick={onRun}
+              disabled={running}
+              className="gap-2"
+            >
+              {running ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              <span>
+                {hasReport ? "Re-run security review" : "Run security review"}
+              </span>
+            </Button>
+          </div>
+        </header>
+
+        {running && !hasReport ? (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              Running the claude-code-security-review skill against the
+              project source. This usually takes 30–120 seconds.
+            </p>
+          </div>
+        ) : hasReport ? (
+          <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-6 py-4 font-mono text-xs leading-relaxed text-midground">
+            {report}
+          </pre>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
+            <p className="max-w-md text-sm text-muted-foreground">
+              The security review hasn't been run yet. Click{" "}
+              <strong className="text-midground">Run security review</strong>{" "}
+              above to scan the project source with the vendored{" "}
+              <code>claude-code-security-review</code> skill. Findings will
+              be saved to <code>SECURITY_REVIEW.md</code> at the project root.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <div className="shrink-0 flex flex-col gap-2 rounded-lg border border-border/60 bg-background-base/40 px-4 py-3">
+        {err && (
+          <div className="flex items-start gap-2 text-xs text-destructive">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{err}</span>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={onApprove}
+            disabled={!hasReport || advancing !== null}
+            className="gap-2"
+          >
+            {advancing === "approve" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            <span>Approve → Done</span>
+          </Button>
+          <Button
+            ghost
+            onClick={onReject}
+            disabled={advancing !== null}
+            className="gap-2"
+          >
+            {advancing === "reject" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowLeft className="h-4 w-4" />
+            )}
+            <span>Back to Improvement</span>
+          </Button>
+          <span className="text-[0.7rem] text-muted-foreground/60">
+            Approve when the report is clean (or knowingly accepted).
+            Back to Improvement to fix issues then re-run.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Done ────────────────────────────────────────────────────────────────────
+
+/**
+ * Done pane is a static summary view rendered when the project is in the
+ * `approve` phase. No chat, no agent activity — the user is looking at
+ * what was built. Each artifact is a collapsible <details> so the page
+ * stays scannable even when DESIGN.md / DATABASE.md / API.md grow long.
+ *
+ * `phases/approve.md` is the matching agent-side brief (chat is read-only
+ * here, so the agent only sees it if a message somehow arrives).
+ */
+function DonePane({ data }: { data: VibeProjectGetResponse }) {
+  const sections: { title: string; content: string | null }[] = [
+    { title: "REQUIREMENTS.md", content: data.requirements_md },
+    { title: "DESIGN.md", content: data.design_md },
+    { title: "DATABASE.md", content: data.database_md },
+    { title: "API.md", content: data.api_md },
+    { title: "SECURITY_REVIEW.md", content: data.security_review_md },
+  ];
+  const writtenCount = sections.filter((s) => (s.content ?? "").trim().length > 0)
+    .length;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+      <section className="shrink-0 rounded-lg border border-border/60 bg-background-base/40 px-5 py-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <Typography
+            mondwest
+            className="font-bold text-[0.95rem] uppercase tracking-[0.05em] text-midground"
+          >
+            Project complete
+          </Typography>
+          <Badge tone="success">{writtenCount} / {sections.length} artifacts</Badge>
+        </div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          All phases approved. The project lives on disk under{" "}
+          <code>{data.path}</code> — open it from the Files page to keep
+          iterating outside the Vibe Code flow.
+        </p>
+      </section>
+
+      <div className="flex flex-col gap-2">
+        {sections.map((s) => {
+          const text = (s.content ?? "").trim();
+          const written = text.length > 0;
+          return (
+            <details
+              key={s.title}
+              open={written && s.title !== "SECURITY_REVIEW.md"}
+              className="group rounded-lg border border-border/60 bg-background-base/40"
+            >
+              <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-midground">
+                <span>{s.title}</span>
+                <Badge tone={written ? "success" : "secondary"}>
+                  {written ? "written" : "not written"}
+                </Badge>
+              </summary>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words border-t border-border/60 px-4 py-3 font-mono text-xs leading-relaxed text-midground">
+                {written ? text : `(${s.title} was not written for this project.)`}
+              </pre>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 // ── Layout helper ────────────────────────────────────────────────────────────
 
