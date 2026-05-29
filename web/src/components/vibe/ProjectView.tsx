@@ -9,7 +9,6 @@ import {
   Check,
   Loader2,
   RefreshCw,
-  Sparkles,
 } from "lucide-react";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -63,7 +62,7 @@ function phaseToStepKey(phase: VibePhase): VibeStepKey {
 const PROJECT_DONE_KEYS: VibeStepKey[] = ["name", "theme", "addons"];
 
 export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
-  const { project, requirements_md, planning_md } = data;
+  const { project, requirements_md, design_md } = data;
 
   const stepperKey = phaseToStepKey(project.phase);
   const doneKeys = useMemo<VibeStepKey[]>(() => {
@@ -99,10 +98,9 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
             />
           )}
           {project.phase === "design" && (
-            <PlanningPane
+            <DesignPane
               project={project}
-              existing={planning_md ?? ""}
-              requirements={requirements_md ?? ""}
+              initialDesign={design_md ?? ""}
               onUpdated={onUpdated}
               onRefresh={onRefresh}
             />
@@ -404,63 +402,56 @@ function RequirementsPreview({
   );
 }
 
-// ── Planning ─────────────────────────────────────────────────────────────────
+// ── Design ──────────────────────────────────────────────────────────────────
 
 /**
- * Planning is read-only by design: the user is reviewing the plan the agent
- * just wrote, not co-authoring it. The chat from Brainstorm is hidden — but
- * we still mount `useChatStream` (invisibly) on the same session so we can
- * kick the agent to (re)generate PLANNING.md without spinning up a second
- * session.
+ * Design is the frontend-mockup phase. Chat is visible (the user iterates
+ * with the agent), the Live preview iframe shows the dev server, and the
+ * approval bar at the bottom lets the user advance to `backend` once the
+ * mockup feels right or roll back to `brainstorm` if scope needs more work.
+ *
+ * Shares the resizable-split helpers with BuildingPane below; the constants
+ * are declared further down but referenced from a function body, so they
+ * are in scope at render time.
  */
-const PLANNING_KICKOFF_PROMPT =
-  "REQUIREMENTS.md is approved. Now write PLANNING.md in the project folder. " +
-  "Cover: file structure, components to build (frontend + backend), data model, " +
-  "implementation order, key dependencies. Keep it tight — the user will read and " +
-  "approve before you start coding, so it must be skim-able. Follow the sopify-sdlc " +
-  "skill standards. Do not start coding yet; wait for approval.";
+const DESIGN_KICKOFF_PROMPT =
+  "REQUIREMENTS.md is approved. We're now in the DESIGN phase. " +
+  "Build a static frontend mockup only — no backend, no Supabase, no fetches. " +
+  "Use React 18 + TypeScript strict + Tailwind v4 per the sopify-sdlc skill, " +
+  "with realistic placeholder data inlined plus loading / empty / error states. " +
+  "Follow the pre-loaded frontend-design skill for a bold visual direction. " +
+  "Write DESIGN.md at the project root summarising components, tokens, pages, " +
+  "and any open questions. Start the dev server with --host 0.0.0.0 (e.g. " +
+  "`vite --host`) so the Live preview iframe can reach it. Tell me when the " +
+  "mockup is reviewable.";
 
-function PlanningPane({
+function DesignPane({
   project,
-  existing,
+  initialDesign,
   onUpdated,
   onRefresh,
 }: {
   project: VibeProjectMarker;
-  existing: string;
-  requirements: string;
+  initialDesign: string;
   onUpdated: (m: VibeProjectMarker) => void;
   onRefresh: () => void;
 }) {
-  // Invisible chat hook — the chat UI is gone from this phase, but we still
-  // need a session handle to ask the agent to write PLANNING.md.
-  const { state, sessionId, send } = useChatStream(project.session_id ?? null);
-  const kickoffSentRef = useRef(false);
-
-  const [content, setContent] = useState(existing);
+  const [designContent, setDesignContent] = useState(initialDesign);
+  const [devServers, setDevServers] = useState<
+    { port: number; url: string }[]
+  >([]);
+  const [reloadKey, setReloadKey] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
 
-  // First entry → if PLANNING.md is empty, ask the agent to write it.
-  useEffect(() => {
-    if (kickoffSentRef.current) return;
-    if (state !== "open" || !sessionId) return;
-    if (content.trim().length > 0) {
-      kickoffSentRef.current = true;
-      return;
-    }
-    kickoffSentRef.current = true;
-    send(PLANNING_KICKOFF_PROMPT);
-  }, [state, sessionId, content, send]);
-
-  // Poll for PLANNING.md updates as the agent writes it.
+  // Poll for DESIGN.md updates as the agent writes it.
   useEffect(() => {
     let cancelled = false;
     const tick = () => {
       api
         .getVibeProject(project.name)
         .then((r) => {
-          if (!cancelled) setContent(r.planning_md ?? "");
+          if (!cancelled) setDesignContent(r.design_md ?? "");
         })
         .catch(() => {
           /* quiet — keep prior content */
@@ -472,6 +463,86 @@ function PlanningPane({
       window.clearInterval(id);
     };
   }, [project.name]);
+
+  const currentServer = devServers[0];
+  const previewSrc = useMemo(
+    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
+    [currentServer, reloadKey],
+  );
+
+  // Resizable split — same wiring as BuildingPane. Shares SPLIT_STORAGE_KEY
+  // so the user's preferred ratio carries from Design through Building.
+  const isStacked = useBelowBreakpoint(1024);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const [chatPct, setChatPct] = useState<number>(() => {
+    if (typeof window === "undefined") return SPLIT_DEFAULT;
+    const raw = Number(window.localStorage.getItem(SPLIT_STORAGE_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampSplit(raw) : SPLIT_DEFAULT;
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SPLIT_STORAGE_KEY,
+        String(Math.round(chatPct)),
+      );
+    } catch {
+      /* localStorage unavailable — ignore. */
+    }
+  }, [chatPct]);
+
+  const updateFromClientX = useCallback((clientX: number) => {
+    const el = splitRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) return;
+    setChatPct(clampSplit(((clientX - rect.left) / rect.width) * 100));
+  }, []);
+  const onDividerPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      draggingRef.current = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [],
+  );
+  const onDividerPointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      updateFromClientX(e.clientX);
+    },
+    [updateFromClientX],
+  );
+  const onDividerPointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    },
+    [],
+  );
+  const onDividerKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setChatPct((p) => clampSplit(p - 2));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setChatPct((p) => clampSplit(p + 2));
+      } else if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        setChatPct(SPLIT_DEFAULT);
+      }
+    },
+    [],
+  );
+  const resetSplit = useCallback(() => setChatPct(SPLIT_DEFAULT), []);
+  const chatStyle = isStacked || !previewSrc
+    ? undefined
+    : { flexGrow: chatPct, flexBasis: 0 };
+  const previewStyle = isStacked
+    ? undefined
+    : { flexGrow: 100 - chatPct, flexBasis: 0 };
 
   const onApprove = useCallback(async () => {
     setAdvancing("approve");
@@ -505,55 +576,95 @@ function PlanningPane({
     }
   }, [project.name, onUpdated, onRefresh]);
 
-  const regenerate = useCallback(() => {
-    if (state !== "open" || !sessionId) return;
-    send(
-      "Rewrite PLANNING.md from scratch. The previous draft missed something — " +
-        "consider edge cases and any feedback from the user so far. Keep it tight.",
-    );
-  }, [state, sessionId, send]);
-
-  const isEmpty = content.trim().length === 0;
-  const waiting = isEmpty;
+  const hasDesign = designContent.trim().length > 0;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60 bg-background-base/40">
-      <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-4">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          PLANNING.md
-        </span>
-        <div className="flex items-center gap-2">
-          <Badge tone={isEmpty ? "secondary" : "success"}>
-            {isEmpty ? "awaiting agent" : "drafted"}
-          </Badge>
-          <Button
-            ghost
-            size="icon"
-            aria-label="Ask the agent to regenerate the plan"
-            title="Regenerate"
-            onClick={regenerate}
-            disabled={state !== "open" || !sessionId}
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div
+        ref={splitRef}
+        className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-0"
+      >
+        <div
+          style={chatStyle}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        >
+          <ChatPanel
+            project={project}
+            header="Design"
+            kickoff={DESIGN_KICKOFF_PROMPT}
+            onDevServersChange={setDevServers}
+          />
+        </div>
+
+        {previewSrc ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize chat and preview panes"
+            aria-valuemin={SPLIT_MIN}
+            aria-valuemax={SPLIT_MAX}
+            aria-valuenow={Math.round(chatPct)}
+            tabIndex={0}
+            onPointerDown={onDividerPointerDown}
+            onPointerMove={onDividerPointerMove}
+            onPointerUp={onDividerPointerUp}
+            onKeyDown={onDividerKeyDown}
+            onDoubleClick={resetSplit}
+            className={cn(
+              "group hidden shrink-0 cursor-col-resize touch-none items-stretch lg:flex",
+              "mx-1 w-1.5 select-none focus-visible:outline-none",
+            )}
+            title="Drag to resize · double-click to reset"
           >
-            <Sparkles className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </header>
+            <span
+              aria-hidden
+              className={cn(
+                "m-auto h-10 w-1 rounded-full bg-border/70 transition-colors",
+                "group-hover:bg-midground/60 group-focus-visible:bg-midground/80",
+              )}
+            />
+          </div>
+        ) : null}
 
-      {waiting ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            The agent is writing PLANNING.md based on the approved requirements.
-            This usually takes 15–60 seconds.
-          </p>
-        </div>
-      ) : (
-        <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-6 py-4 font-mono text-xs leading-relaxed text-midground">
-          {content}
-        </pre>
-      )}
+        {previewSrc ? (
+          <aside
+            style={previewStyle}
+            className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/60 bg-background-base/40 lg:flex-1"
+            aria-label="Live preview"
+          >
+            <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3">
+              <Typography
+                mondwest
+                className="text-[0.75rem] tracking-[0.1em] uppercase text-muted-foreground"
+              >
+                Live preview
+              </Typography>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
+                  {currentServer?.url}
+                </span>
+                <Button
+                  ghost
+                  size="icon"
+                  aria-label="Reload preview"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </header>
+            <iframe
+              key={previewSrc}
+              src={previewSrc}
+              title={`${project.name} preview`}
+              className="min-h-0 flex-1 border-0"
+              sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
+            />
+          </aside>
+        ) : null}
+      </div>
 
-      <div className="flex flex-col gap-2 border-t border-border/60 px-4 py-3">
+      <div className="shrink-0 flex flex-col gap-2 rounded-lg border border-border/60 bg-background-base/40 px-4 py-3">
         {err && (
           <div className="flex items-start gap-2 text-xs text-destructive">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -561,9 +672,12 @@ function PlanningPane({
           </div>
         )}
         <div className="flex flex-wrap items-center gap-3">
+          <Badge tone={hasDesign ? "success" : "secondary"}>
+            DESIGN.md {hasDesign ? "drafted" : "not yet"}
+          </Badge>
           <Button
             onClick={onApprove}
-            disabled={isEmpty || advancing !== null}
+            disabled={advancing !== null}
             className="gap-2"
           >
             {advancing === "approve" ? (
@@ -587,7 +701,7 @@ function PlanningPane({
             <span>Back to Brainstorm</span>
           </Button>
           <span className="text-[0.7rem] text-muted-foreground/60">
-            Approve to let the agent start coding. Reject to keep refining scope.
+            Click through the preview iframe. Approve when the mockup feels right.
           </span>
         </div>
       </div>

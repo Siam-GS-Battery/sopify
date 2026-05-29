@@ -595,6 +595,10 @@ export interface VibeProjectGetResponse {
   project: VibeProjectMarker;
   path: string;
   requirements_md: string | null;
+  design_md: string | null;
+  database_md: string | null;
+  api_md: string | null;
+  /** Legacy field — null for new 6-phase projects. */
   planning_md: string | null;
   security_review_md: string | null;
 }
