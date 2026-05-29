@@ -1,0 +1,120 @@
+# Sopify-shipped Supabase Local stack — minimal viable subset.
+#
+# Brought up by `sopify supabase start`, pre-pulled by `sopify install`.
+# Vibe Code projects in the `database` phase target these services.
+#
+# Service map (all bound 127.0.0.1 on the host; agent inside the sandbox
+# reaches them via host.docker.internal):
+#   postgres   :5432   raw Postgres (login: postgres / sopify-supabase-dev)
+#   studio     :54323  Supabase Studio UI (browser)
+#   meta       :54322  Postgres-meta REST (Studio backend)
+#   rest       :54321  PostgREST   — what the JS client calls
+#   auth       :54320  GoTrue auth — JWT / signup / sessions
+#
+# These ports intentionally avoid Sopify's existing publish list
+# (3000, 5173, 4173, 9119, …) so a Vite dev server in the same project
+# doesn't collide.
+#
+# IMPORTANT: this is a development stack — credentials below are hard-
+# coded and the JWT secret is short. Do NOT use this compose file for
+# anything resembling production.
+
+x-supabase-env: &supabase-env
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: sopify-supabase-dev
+  POSTGRES_DB: postgres
+
+services:
+  postgres:
+    image: supabase/postgres:15.1.0.147
+    container_name: sopify-supabase-postgres
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_PASSWORD: sopify-supabase-dev
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - sopify-supabase-db:/var/lib/postgresql/data
+
+  rest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: sopify-supabase-rest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:54321:3000"
+    environment:
+      PGRST_DB_URI: postgres://postgres:sopify-supabase-dev@postgres:5432/postgres
+      PGRST_DB_SCHEMAS: public,storage,graphql_public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: sopify-dev-jwt-secret-change-me-1234567890abcdef
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  auth:
+    image: supabase/gotrue:v2.158.1
+    container_name: sopify-supabase-auth
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:54320:9999"
+    environment:
+      <<: *supabase-env
+      GOTRUE_API_HOST: "0.0.0.0"
+      GOTRUE_API_PORT: "9999"
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://postgres:sopify-supabase-dev@postgres:5432/postgres?search_path=auth
+      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_JWT_SECRET: sopify-dev-jwt-secret-change-me-1234567890abcdef
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+
+  meta:
+    image: supabase/postgres-meta:v0.84.2
+    container_name: sopify-supabase-meta
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:54322:8080"
+    environment:
+      PG_META_PORT: "8080"
+      PG_META_DB_HOST: postgres
+      PG_META_DB_PORT: "5432"
+      PG_META_DB_USER: postgres
+      PG_META_DB_PASSWORD: sopify-supabase-dev
+      PG_META_DB_NAME: postgres
+
+  studio:
+    image: supabase/studio:20240826-9d56a5d
+    container_name: sopify-supabase-studio
+    restart: unless-stopped
+    depends_on:
+      meta:
+        condition: service_started
+    ports:
+      - "127.0.0.1:54323:3000"
+    environment:
+      SUPABASE_URL: http://localhost:54321
+      STUDIO_PG_META_URL: http://meta:8080
+      POSTGRES_PASSWORD: sopify-supabase-dev
+      DEFAULT_ORGANIZATION_NAME: "Sopify local"
+      DEFAULT_PROJECT_NAME: "vibe-local"
+
+volumes:
+  sopify-supabase-db:
+    name: sopify-supabase-db
