@@ -629,12 +629,13 @@ export default function App() {
                   className="self-stretch w-px"
                   style={{ background: "#1D63ED", opacity: 0.4 }}
                 />
-                <Typography
-                  className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem]"
-                  style={{ color: "#00349dff" }}
-                >
-                  Sopify AI
-                </Typography>
+                <img
+                  src="/sopify-icon.png"
+                  alt="Sopify AI"
+                  className="block h-7 w-auto select-none"
+                  style={{ imageRendering: "pixelated" }}
+                  draggable={false}
+                />
               </div>
 
               <div className="flex items-center gap-1">
