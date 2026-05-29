@@ -1,11 +1,33 @@
 # Sopify — System Architecture
 
-**Status:** Audit current as of 2026-05-29 (rev 2). Reconstructed by reading source. Where the live system diverges from this doc, trust the source — see file:line citations on every claim.
+<p align="center">
+  <img src="assets/icon-background-transparent.png" alt="Sopify" width="120" />
+</p>
 
-**What's new in this revision:**
+**Status:** Audit current as of 2026-05-30 (rev 2.1). Reconstructed by reading source. Where the live system diverges from this doc, trust the source — see file:line citations on every claim.
+
+**What's new in rev 2 (2026-05-29 — already on `main`):**
 - Per-session dev server lifecycle (kill on session switch + auto revive). See [§9](#9-dev-server-lifecycle-per-session).
 - Frontend `BuildingPane` port selector replaced with auto-detection from chat tool output.
 - `CanvasPanel` in /panel adopts the same auto-detected URL.
+- Alibaba (Qwen Cloud) provider in the API Keys registry; `env_writable` probe in the form so the UI gates Save when `~/.hermes/.env` isn't writable.
+- Theme picker collapsed to a single Sopify theme.
+- `~/.hermes` mounted into the sandbox as `rw` (was `:ro`) so the API Keys form can persist keys from inside the microVM.
+
+**What's new in rev 2.1 (PR `feat/vibe-phase-prompts-and-supabase`, 2026-05-30):**
+- **Vibe Code phase artifacts** — `prompts/vibe/phases/{design,database,api,verify}.md` define a 4-stage building flow (design → database → api → verify) with strict do/don't boundaries per phase. **The backend phase machine still ships the legacy `development` step**; wiring `_VIBE_BUILDING_PHASES` + new accept endpoints into `_vibe_compose_system_prompt` is the next PR.
+- **`skills/frontend-design/`** — Anthropic's `frontend-design` skill vendored verbatim from `anthropics/claude-code` (plugins/frontend-design). Reserved for the design phase as the visual-quality bar (avoid Inter/Roboto generic look). `VENDOR.md` documents source URL + sync rules.
+- **`docker/supabase/`** — minimal Supabase Local stack for Vibe's `database` phase. Services bound 127.0.0.1, reached from inside the sandbox via `host.docker.internal`:
+
+  | Service | Host port | Container port | Purpose |
+  |---|:-:|:-:|---|
+  | postgres | 5432 | 5432 | Raw DB (`postgres` / `sopify-supabase-dev`) |
+  | rest (PostgREST) | 54321 | 3000 | `VITE_SUPABASE_URL` target |
+  | auth (GoTrue) | 54320 | 9999 | JWT signup / signin |
+  | meta (postgres-meta) | 54322 | 8080 | Studio backend |
+  | **studio** | **54323** | 3000 | Browser UI |
+
+- Nav: "Virtual Office" → "Dashboard"; reordered ahead of "Vibe Code" in `EVERYDAY_NAV_ORDER`.
 
 **Scope:** End-to-end picture of the running Sopify dashboard: host launcher, Docker sandbox, FastAPI dashboard, TUI gateway, React SPA, ENCM daemon, plus the supporting data model, auth chain, and recent Vibe Code work.
 
