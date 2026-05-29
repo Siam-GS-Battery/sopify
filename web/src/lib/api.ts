@@ -565,9 +565,8 @@ export interface VibeProjectCreateRequest {
 
 export type VibePhase =
   | "brainstorm"
-  | "requirements"
-  | "planning"
-  | "development"
+  | "design"
+  | "backend"
   | "improvement"
   | "security"
   | "approve";

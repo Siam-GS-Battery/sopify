@@ -96,8 +96,11 @@ export const VIBE_STEP_KEYS = [
   "theme",
   "addons",
   "brainstorm",
-  "planning",
-  "building",
+  "design",
+  "backend",
+  "improvement",
+  "security",
+  "done",
 ] as const;
 
 export type VibeStepKey = (typeof VIBE_STEP_KEYS)[number];
@@ -107,6 +110,9 @@ export const VIBE_STEPS: readonly StepperItem[] = [
   { key: "theme", title: "Theme", description: "Choose a starting example." },
   { key: "addons", title: "Add-ons", description: "Toggle optional features." },
   { key: "brainstorm", title: "Brainstorm", description: "Define requirements with the agent." },
-  { key: "planning", title: "Planning", description: "Outline the implementation plan." },
-  { key: "building", title: "Building", description: "Agent writes the code." },
+  { key: "design", title: "Design", description: "Frontend mockup with frontend-design skill." },
+  { key: "backend", title: "Backend & Database", description: "Schema, API, and frontend wiring." },
+  { key: "improvement", title: "Improvement", description: "Polish, tweaks, free iteration." },
+  { key: "security", title: "Security", description: "Automated security review." },
+  { key: "done", title: "Done", description: "All artifacts approved." },
 ];

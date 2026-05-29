@@ -34,10 +34,14 @@ import { cn } from "@/lib/utils";
 /**
  * Project work view: phase pane on the left, vertical stepper on the right.
  *
- * Backend has 7 phases (brainstorm/requirements/planning/development/
- * improvement/security/approve) but the UI surfaces only 3 of them — the
- * other four are either skipped on accept or hidden as silent end states.
- * See `phaseToStepKey` for the mapping.
+ * Backend has 6 phases (brainstorm/design/backend/improvement/security/
+ * approve). For now the UI still routes them through the three original
+ * panes (Brainstorm / Planning / Building) — the Planning pane handles
+ * the design phase, and the Building pane handles backend / improvement /
+ * security / approve. A follow-up PR splits each phase into its own
+ * dedicated pane with the right artifact preview (DESIGN.md / DATABASE.md
+ * / API.md / SECURITY_REVIEW.md). See `phaseToStepKey` for the rail
+ * mapping.
  */
 
 interface Props {
@@ -48,13 +52,12 @@ interface Props {
 }
 
 function phaseToStepKey(phase: VibePhase): VibeStepKey {
-  // brainstorm + the now-hidden requirements both stay on "Brainstorm"
-  if (phase === "brainstorm" || phase === "requirements") return "brainstorm";
-  if (phase === "planning") return "planning";
-  // development is the final visible step; improvement/security/approve from
-  // legacy projects also map here so the rail doesn't claim more progress
-  // than the simplified UI exposes.
-  return "building";
+  if (phase === "brainstorm") return "brainstorm";
+  if (phase === "design") return "design";
+  if (phase === "backend") return "backend";
+  if (phase === "improvement") return "improvement";
+  if (phase === "security") return "security";
+  return "done"; // approve
 }
 
 const PROJECT_DONE_KEYS: VibeStepKey[] = ["name", "theme", "addons"];
@@ -66,7 +69,14 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
   const doneKeys = useMemo<VibeStepKey[]>(() => {
     const done = [...PROJECT_DONE_KEYS];
     // Treat every step before the current as done.
-    const order: VibeStepKey[] = ["brainstorm", "planning", "building"];
+    const order: VibeStepKey[] = [
+      "brainstorm",
+      "design",
+      "backend",
+      "improvement",
+      "security",
+      "done",
+    ];
     for (const k of order) {
       if (k === stepperKey) break;
       done.push(k);
@@ -80,8 +90,7 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
         <ProjectHeader project={project} onBack={onBack} />
 
         <div className="flex min-h-0 flex-1 flex-col">
-          {(project.phase === "brainstorm" ||
-            project.phase === "requirements") && (
+          {project.phase === "brainstorm" && (
             <BrainstormPane
               project={project}
               initialRequirements={requirements_md ?? ""}
@@ -89,7 +98,7 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
               onRefresh={onRefresh}
             />
           )}
-          {project.phase === "planning" && (
+          {project.phase === "design" && (
             <PlanningPane
               project={project}
               existing={planning_md ?? ""}
@@ -98,7 +107,7 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
               onRefresh={onRefresh}
             />
           )}
-          {(project.phase === "development" ||
+          {(project.phase === "backend" ||
             project.phase === "improvement" ||
             project.phase === "security" ||
             project.phase === "approve") && (
@@ -299,11 +308,10 @@ function BrainstormPane({
           project={project}
           initial={initialRequirements}
           onApprove={async () => {
-            // Skip the legacy "requirements" review phase — jump straight
-            // to Planning. REQUIREMENTS.md is whatever the agent has
-            // written into the project folder by now.
+            // REQUIREMENTS.md is whatever the agent has written into the
+            // project folder by now; advance directly to the design phase.
             const res = await api.patchVibeProject(project.name, {
-              phase: "planning",
+              phase: "design",
             });
             onUpdated(res.project);
             onRefresh();
@@ -386,7 +394,7 @@ function RequirementsPreview({
           ) : (
             <Check className="h-4 w-4" />
           )}
-          <span>Approve plan → Planning</span>
+          <span>Approve → Design</span>
         </Button>
         <p className="text-[0.7rem] text-muted-foreground/60">
           When REQUIREMENTS.md captures the scope, approve to move on.
@@ -470,7 +478,7 @@ function PlanningPane({
     setErr(null);
     try {
       const res = await api.patchVibeProject(project.name, {
-        phase: "development",
+        phase: "backend",
       });
       onUpdated(res.project);
       onRefresh();
@@ -563,7 +571,7 @@ function PlanningPane({
             ) : (
               <Check className="h-4 w-4" />
             )}
-            <span>Approve → Build</span>
+            <span>Approve → Backend</span>
           </Button>
           <Button
             ghost
