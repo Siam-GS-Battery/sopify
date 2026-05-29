@@ -804,7 +804,7 @@ export default function SessionsPage() {
           ) : (
             <>
               <img
-                src="/rhino-icon.png"
+                src="/sopify-icon.png"
                 alt="Sopify"
                 width={120}
                 height={120}
