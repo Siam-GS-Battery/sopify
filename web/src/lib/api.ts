@@ -17,7 +17,6 @@ function readBasePath(): string {
 export const HERMES_BASE_PATH = readBasePath();
 const BASE = HERMES_BASE_PATH;
 
-import type { DashboardTheme } from "@/themes/types";
 
 // Ephemeral session token for protected endpoints.
 // Injected into index.html by the server — never fetched via API.
@@ -357,16 +356,280 @@ export const api = {
       },
     ),
 
-  // Dashboard themes
-  getThemes: () =>
-    fetchJSON<DashboardThemesResponse>("/api/dashboard/themes"),
-  setTheme: (name: string) =>
-    fetchJSON<{ ok: boolean; theme: string }>("/api/dashboard/theme", {
-      method: "PUT",
+  // File browser — two roots are exposed by the backend:
+  //   "workspace" — the cwd of `sopify dashboard` (= bind-mounted /workspace
+  //                 inside the sandbox; what the agent's shell sees).
+  //   "hermes"    — HERMES_HOME (~/.hermes inside the sandbox =
+  //                 /home/sopify/.hermes/), holding vibe-projects/, state.db,
+  //                 dashboard-themes/, plugins/, logs/. Container-local —
+  //                 only visible through this API, not on the host disk.
+  // All file ops accept ``root`` (default "workspace") so the FilesPage can
+  // switch between sections without a separate set of endpoints.
+  listFiles: (path: string = "", root: string = "workspace") =>
+    fetchJSON<FilesListResponse>(
+      `/api/files?path=${encodeURIComponent(path)}&root=${encodeURIComponent(root)}`,
+    ),
+  readFile: (path: string, root: string = "workspace") =>
+    fetchJSON<FilesReadResponse>(
+      `/api/files/read?path=${encodeURIComponent(path)}&root=${encodeURIComponent(root)}`,
+    ),
+  downloadFileUrl: (path: string, root: string = "workspace") => {
+    // Subresource loads (<a>, <img>) can't send the X-Hermes-Session-Token
+    // header — append the token as ?_token=… so the auth middleware lets
+    // the request through. The backend accepts the same token via either
+    // transport.
+    const token = window.__HERMES_SESSION_TOKEN__ ?? "";
+    const qs = new URLSearchParams({ path, root });
+    if (token) qs.set("_token", token);
+    return `${BASE}/api/files/download?${qs.toString()}`;
+  },
+  /**
+   * URL that renders a workspace file inline (for the Canvas iframe preview).
+   * Lives under /preview (outside /api) so the previewed HTML's relative
+   * subresources resolve and load without the session token — the backend
+   * authenticates this top-level load via ?_token= and sets a scoped cookie
+   * for the nested requests. `bust` forces a reload after the agent edits.
+   */
+  previewUrl: (path: string, bust?: number, inspect?: boolean) => {
+    const token = window.__HERMES_SESSION_TOKEN__ ?? "";
+    const clean = path.replace(/^\/+/, "");
+    const qs = new URLSearchParams();
+    if (token) qs.set("_token", token);
+    if (bust !== undefined) qs.set("_v", String(bust));
+    if (inspect) qs.set("_inspect", "1");
+    const query = qs.toString();
+    return `${BASE}/preview/${clean.split("/").map(encodeURIComponent).join("/")}${query ? `?${query}` : ""}`;
+  },
+  // Dev-server manager — lets Live mode start `npm run dev` for the user.
+  // Servers are tracked per chat session: switching sessions does NOT kill
+  // a running server. The only cross-session interaction is port collision —
+  // when a newer session's server claims a port an older session was using,
+  // the backend stops the older one so the newer keeps the port.
+  startPreviewServer: (sessionId: string, command?: string, cwd?: string) =>
+    fetchJSON<{ ok: boolean; pid: number; command: string; session_id: string }>(
+      "/api/preview-server/start",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, command, cwd }),
+      },
+    ),
+  previewServerStatus: (sessionId: string) =>
+    fetchJSON<{
+      running: boolean;
+      pid: number | null;
+      command: string | null;
+      cwd: string | null;
+      url: string | null;
+      logs: string[];
+    }>(`/api/preview-server/status?session_id=${encodeURIComponent(sessionId)}`),
+  stopPreviewServer: (sessionId: string) =>
+    fetchJSON<{ ok: boolean }>("/api/preview-server/stop", {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ session_id: sessionId }),
     }),
+  uploadFiles: async (
+    path: string,
+    files: File[],
+    root: string = "workspace",
+  ) => {
+    const fd = new FormData();
+    fd.append("path", path);
+    fd.append("root", root);
+    for (const f of files) fd.append("files", f, f.name);
+    const headers = new Headers();
+    const token = window.__HERMES_SESSION_TOKEN__;
+    if (token) headers.set(SESSION_HEADER, token);
+    const res = await fetch(`${BASE}/api/files/upload`, {
+      method: "POST",
+      headers,
+      body: fd,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${res.status}: ${text}`);
+    }
+    return (await res.json()) as FilesUploadResponse;
+  },
+  deleteFile: (path: string, root: string = "workspace") =>
+    fetchJSON<{ ok: boolean }>(
+      `/api/files?path=${encodeURIComponent(path)}&root=${encodeURIComponent(root)}`,
+      { method: "DELETE" },
+    ),
+  renameFile: (src: string, dst: string, root: string = "workspace") =>
+    fetchJSON<{ ok: boolean }>("/api/files/rename", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ src, dst, root }),
+    }),
+  mkdir: (path: string, root: string = "workspace") =>
+    fetchJSON<{ ok: boolean; path: string }>("/api/files/mkdir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, root }),
+    }),
+
+  // ── Vibe Code (AI-DLC project scaffolding) ────────────────────────────────
+  // Backed by `/api/vibe/*` in web_server.py. `vibeExampleImageUrl` returns
+  // a URL string the dashboard can render directly in <img src=...>; the
+  // image endpoint enforces the same session-token check as JSON routes.
+  listVibeExamples: () =>
+    fetchJSON<{ examples: VibeExample[] }>("/api/vibe/examples"),
+  vibeExampleImageUrl: (name: string) => {
+    // <img src> can't carry the X-Hermes-Session-Token header — the auth
+    // middleware accepts ?_token=<token> as a fallback for embeddable URLs.
+    const token = window.__HERMES_SESSION_TOKEN__ ?? "";
+    const tokenQs = token ? `?_token=${encodeURIComponent(token)}` : "";
+    return `${HERMES_BASE_PATH}/api/vibe/examples/${encodeURIComponent(name)}/image.png${tokenQs}`;
+  },
+  vibePreviewUrl: (name: string) => {
+    // iframe src for the Building-phase live preview. Same token-query
+    // dance as the image endpoint — the top-level navigation carries the
+    // token, the server then sets a /preview-scoped cookie so nested
+    // subresource loads (CSS/JS/images) authenticate transparently.
+    const token = window.__HERMES_SESSION_TOKEN__ ?? "";
+    const tokenQs = token ? `?_token=${encodeURIComponent(token)}` : "";
+    return `${HERMES_BASE_PATH}/preview/vibe/${encodeURIComponent(name)}/${tokenQs}`;
+  },
+  createVibeProject: (body: VibeProjectCreateRequest) =>
+    fetchJSON<VibeProjectCreateResponse>("/api/vibe/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  listVibeProjects: () =>
+    fetchJSON<{ projects: VibeProjectSummary[] }>("/api/vibe/projects"),
+  getVibeProject: (name: string) =>
+    fetchJSON<VibeProjectGetResponse>(
+      `/api/vibe/projects/${encodeURIComponent(name)}`,
+    ),
+  patchVibeProject: (
+    name: string,
+    body: { summary?: string; session_id?: string; phase?: string },
+  ) =>
+    fetchJSON<{ ok: boolean; project: VibeProjectMarker }>(
+      `/api/vibe/projects/${encodeURIComponent(name)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    ),
+  acceptVibeRequirements: (name: string, content: string) =>
+    fetchJSON<{ ok: boolean; project: VibeProjectMarker }>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/requirements`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      },
+    ),
+  acceptVibePlanning: (name: string, content: string) =>
+    fetchJSON<{ ok: boolean; project: VibeProjectMarker }>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/planning`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content }),
+      },
+    ),
+  runVibeSecurityReview: (name: string) =>
+    fetchJSON<{ ok: boolean; project: VibeProjectMarker; report: string }>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/security-review`,
+      { method: "POST" },
+    ),
+  getVibeSystemPrompt: (name: string) =>
+    fetchJSON<{ prompt: string }>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/system-prompt`,
+    ),
+  deleteVibeProject: (name: string) =>
+    fetchJSON<{ ok: boolean }>(
+      `/api/vibe/projects/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ),
 };
+
+export interface VibeExample {
+  name: string;
+  label: string;
+  has_image: boolean;
+  image_url: string | null;
+}
+
+export interface VibeProjectCreateRequest {
+  name: string;
+  mode: string;
+  add_ons: string[];
+}
+
+export type VibePhase =
+  | "brainstorm"
+  | "requirements"
+  | "planning"
+  | "development"
+  | "improvement"
+  | "security"
+  | "approve";
+
+export interface VibeProjectMarker {
+  name: string;
+  mode: string;
+  add_ons: string[];
+  created_at: string;
+  updated_at?: string;
+  phase: VibePhase;
+  session_id?: string | null;
+  summary?: string;
+}
+
+export interface VibeProjectSummary {
+  name: string;
+  mode: string;
+  add_ons: string[];
+  phase: VibePhase;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface VibeProjectGetResponse {
+  project: VibeProjectMarker;
+  path: string;
+  requirements_md: string | null;
+  planning_md: string | null;
+  security_review_md: string | null;
+}
+
+export interface VibeProjectCreateResponse {
+  ok: boolean;
+  name: string;
+  path: string;
+  project: VibeProjectMarker;
+}
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size: number | null;
+  mtime: number;
+}
+
+export interface FilesListResponse {
+  root: string;
+  path: string;
+  entries: FileEntry[];
+}
+
+export type FilesReadResponse =
+  | { binary: false; size: number; content: string }
+  | { binary: true; size: number }
+  | { too_large: true; size: number; cap: number };
+
+export interface FilesUploadResponse {
+  ok: boolean;
+  saved: { name: string; path: string; size: number }[];
+}
 
 export interface ActionResponse {
   name: string;
@@ -463,6 +726,10 @@ export interface ApiKeyProvider {
   redacted_value: string | null;
   /** True when the sbx CLI is on PATH on the host. */
   sbx_available: boolean;
+  /** True when the backend can write ~/.hermes/.env (the file/dir is
+   *  writable by the process).  When false the UI disables Save/Remove and
+   *  shows guidance about recreating the sandbox or saving from the host. */
+  env_writable: boolean;
 }
 
 export interface ApiKeySaveResult {
@@ -790,20 +1057,6 @@ export interface OAuthPollResponse {
 }
 
 // ── Dashboard theme types ──────────────────────────────────────────────
-
-export interface DashboardThemeSummary {
-  description: string;
-  label: string;
-  name: string;
-  /** Full theme definition for user themes; undefined for built-ins
-   *  (which the frontend already has locally). */
-  definition?: DashboardTheme;
-}
-
-export interface DashboardThemesResponse {
-  active: string;
-  themes: DashboardThemeSummary[];
-}
 
 // ── Dashboard plugin types ─────────────────────────────────────────────
 

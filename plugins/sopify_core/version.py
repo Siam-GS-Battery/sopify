@@ -4,9 +4,7 @@ REQ-0.5 — `sopify --version` shows Sopify version *and* its underlying
 runtime version (the upstream fork — see SOPIFY_ARCH.md).
 """
 from __future__ import annotations
-
 import importlib.metadata as md
-
 SOPIFY_VERSION = "0.1.0"
 
 

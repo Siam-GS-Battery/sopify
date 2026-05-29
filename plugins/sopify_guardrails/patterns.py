@@ -1,4 +1,5 @@
-"""HARD_DENY and SOFT_DENY pattern tables.
+"""
+HARD_DENY and SOFT_DENY pattern tables.
 
 Mirrors the table in DESIGN_ARCHITECTURE.md §REQ-6.1.2 and §REQ-6.2.1.
 Patterns are compiled at import time so the hot path is just regex match.

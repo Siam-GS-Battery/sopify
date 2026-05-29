@@ -1,0 +1,1194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>GS Battery — Material Management · Approval Queue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --primary: #2563EB;
+    --primary-hover: #1D4ED8;
+    --primary-50: #EFF6FF;
+    --primary-100: #DBEAFE;
+    --success: #10B981;
+    --success-50: #ECFDF5;
+    --warning: #F59E0B;
+    --warning-50: #FFFBEB;
+    --warning-100: #FEF3C7;
+    --error: #EF4444;
+    --error-50: #FEF2F2;
+    --bg: #F8FAFC;
+    --surface: #FFFFFF;
+    --text: #111827;
+    --text-2: #6B7280;
+    --text-3: #9CA3AF;
+    --border: #E5E7EB;
+    --border-2: #F1F5F9;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-md: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-lg: 0 10px 25px -10px rgba(15, 23, 42, 0.12), 0 4px 10px -4px rgba(15, 23, 42, 0.06);
+    --shadow-panel: -16px 0 40px -16px rgba(15, 23, 42, 0.14);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #0F172A; min-height: 100vh; font-family: "IBM Plex Sans Thai","IBM Plex Sans", system-ui, -apple-system, sans-serif; color: var(--text); overflow: hidden; }
+  body { display: grid; place-items: center; min-height: 100vh; }
+  .stage { width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .frame-wrap { width: 1440px; height: 900px; transform-origin: top left; flex-shrink: 0; }
+
+  /* ===== 1440 x 900 fixed frame ===== */
+  .frame {
+    width: 1440px;
+    height: 900px;
+    background: var(--bg);
+    border-radius: 14px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,.5);
+    display: grid;
+    grid-template-rows: 64px 1fr;
+  }
+
+  /* ===== Top nav ===== */
+  .topnav {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 240px 1fr auto;
+    align-items: center;
+    padding: 0 24px 0 16px;
+    box-shadow: var(--shadow-sm);
+    position: relative;
+    z-index: 5;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { height: 32px; width: auto; display: block; }
+  .brand .vbar { width: 1px; height: 22px; background: var(--border); }
+  .brand .product {
+    font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.2px;
+  }
+  .brand .product small { display:block; font-weight: 500; color: var(--text-2); font-size: 11px; letter-spacing: 0.4px; text-transform: uppercase; margin-top:2px; }
+
+  .breadcrumb {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text-2); font-size: 13px;
+    justify-self: start; margin-left: 16px;
+    white-space: nowrap; min-width: 0;
+  }
+  .breadcrumb .sep { color: var(--text-3); }
+  .breadcrumb .here { color: var(--text); font-weight: 600; }
+  .breadcrumb .here .th { color: var(--text-2); font-weight: 500; margin-left: 4px; }
+
+  .nav-right { display: flex; align-items: center; gap: 12px; }
+  .role-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--primary-50); color: var(--primary);
+    padding: 6px 10px 6px 8px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; border: 1px solid #DBEAFE;
+  }
+  .role-badge .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--primary); }
+
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface); display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-2); cursor: pointer; position: relative;
+    transition: all .15s;
+  }
+  .icon-btn:hover { background: var(--bg); color: var(--text); }
+  .icon-btn .ping {
+    position: absolute; top: 6px; right: 6px; min-width: 16px; height: 16px;
+    background: var(--error); color: #fff; border-radius: 999px;
+    font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+    padding: 0 4px; border: 2px solid #fff;
+  }
+
+  .avatar-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 10px 4px 4px; border-radius: 999px;
+    border: 1px solid var(--border); cursor: pointer;
+    background: var(--surface);
+  }
+  .avatar {
+    width: 30px; height: 30px; border-radius: 999px;
+    background: linear-gradient(135deg, #2563EB, #1E40AF);
+    color: #fff; font-weight: 600; font-size: 12px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .avatar-chip .name { font-size: 13px; font-weight: 600; color: var(--text); }
+  .avatar-chip .caret { color: var(--text-3); }
+
+  /* ===== Body grid ===== */
+  .body {
+    display: grid;
+    grid-template-columns: 240px 1fr 360px;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* ===== Sidebar ===== */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px 12px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .nav-section { padding: 14px 12px 6px; font-size: 11px; font-weight: 600; color: var(--text-3); letter-spacing: 0.8px; text-transform: uppercase; }
+  .nav-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 12px; border-radius: 8px; color: var(--text-2);
+    font-size: 13.5px; font-weight: 500; cursor: pointer; user-select: none;
+    transition: background .12s, color .12s;
+  }
+  .nav-item:hover { background: var(--bg); color: var(--text); }
+  .nav-item .ico { width: 18px; height: 18px; flex-shrink: 0; color: currentColor; }
+  .nav-item.active {
+    background: var(--primary-50); color: var(--primary); font-weight: 600;
+    position: relative;
+  }
+  .nav-item.active::before {
+    content:""; position:absolute; left:-12px; top:8px; bottom:8px; width:3px;
+    background: var(--primary); border-radius: 0 3px 3px 0;
+  }
+  .nav-item .grow { flex: 1; }
+  .nav-item .pill {
+    background: var(--error); color: #fff; font-size: 11px; font-weight: 700;
+    border-radius: 999px; min-width: 22px; height: 18px;
+    display: inline-flex; align-items: center; justify-content: center; padding: 0 6px;
+    box-shadow: 0 0 0 3px var(--error-50);
+  }
+  .nav-item.muted .pill { background: var(--text-3); box-shadow: 0 0 0 3px #F1F5F9; }
+  .sidebar-foot {
+    margin-top: auto; padding: 14px;
+    border-top: 1px solid var(--border-2);
+    display: flex; align-items: center; gap: 10px;
+    color: var(--text-2); font-size: 12px;
+    line-height: 1.45;
+  }
+  .sidebar-foot > div > div + div { margin-top: 2px; }
+  .sidebar-foot .live { width: 8px; height: 8px; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 4px var(--success-50); }
+
+  /* ===== Main ===== */
+  .main {
+    overflow-y: auto;
+    padding: 24px 24px 32px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+  .page-head h1 {
+    margin: 0;
+    font-size: 22px; font-weight: 700; color: var(--text); letter-spacing: -0.2px;
+    white-space: nowrap;
+  }
+  .page-head .sub { color: var(--text-2); font-size: 13px; margin-top: 2px; }
+
+  /* Tabs */
+  .tabs {
+    display: flex; gap: 4px; border-bottom: 1px solid var(--border);
+    padding: 0 4px;
+  }
+  .tab {
+    padding: 10px 14px 12px; cursor: pointer; user-select: none;
+    color: var(--text-2); font-size: 13.5px; font-weight: 600;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+  .tab .count {
+    background: var(--warning-100); color: #92400E;
+    font-size: 11px; font-weight: 700;
+    border-radius: 999px; padding: 1px 7px;
+  }
+  .tab.active .count { background: var(--primary-50); color: var(--primary); }
+
+  /* Card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-sm);
+  }
+
+  /* Filter bar */
+  .filters {
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
+    gap: 10px;
+    align-items: center;
+  }
+  .field {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; height: 36px; min-width: 0;
+    color: var(--text); font-size: 13px;
+    cursor: pointer; transition: border-color .12s;
+  }
+  .field:hover { border-color: #CBD5E1; }
+  .field .lbl { color: var(--text-3); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; }
+  .field .val { font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .field .ico { color: var(--text-3); flex-shrink: 0; }
+  .field input { border: none; outline: none; background: transparent; flex: 1; min-width: 0; font: inherit; color: inherit; }
+  .field input::placeholder { color: var(--text-3); }
+  .field.search { padding-left: 10px; }
+  .seg-status { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; height: 36px; }
+  .seg-status > button {
+    border: none; background: var(--surface); padding: 0 8px; cursor: pointer;
+    font: inherit; font-size: 11.5px; font-weight: 600; color: var(--text-2);
+    border-right: 1px solid var(--border); display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .seg-status > button:last-child { border-right: none; }
+  .seg-status > button.on { background: var(--text); color: #fff; }
+  .seg-status .dot { width: 6px; height: 6px; border-radius: 999px; }
+  .seg-status .dot.p { background: var(--warning); }
+  .seg-status .dot.a { background: var(--success); }
+  .seg-status .dot.r { background: var(--error); }
+
+  /* Toolbar above table */
+  .table-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 16px; border-bottom: 1px solid var(--border-2);
+  }
+  .table-toolbar .left { display: flex; align-items: center; gap: 12px; }
+  .table-toolbar h2 {
+    margin: 0; font-size: 15px; font-weight: 600; color: var(--text);
+  }
+  .table-toolbar .count-pill {
+    font-size: 11.5px; font-weight: 600; color: var(--text-2);
+    background: var(--bg); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px;
+  }
+  .table-toolbar .right { display: flex; align-items: center; gap: 8px; }
+  .btn-ghost {
+    height: 32px; padding: 0 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface);
+    font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .btn-ghost:hover { background: var(--bg); }
+
+  /* Status chip strip */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; border-bottom: 1px solid var(--border-2);
+    background: #FAFBFC;
+  }
+  .status-strip .lbl { font-size: 11px; font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.5px; margin-right: 2px; }
+
+  /* Table */
+  .qtable { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+  .qtable thead th {
+    text-align: left;
+    font-size: 11px; font-weight: 600; color: var(--text-3);
+    letter-spacing: 0.5px; text-transform: uppercase;
+    padding: 10px 10px;
+    background: #FAFBFC;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .qtable tbody td { overflow: hidden; }
+  .qtable tbody td {
+    padding: 12px 10px;
+    border-bottom: 1px solid var(--border-2);
+    font-size: 12.5px; color: var(--text); vertical-align: top;
+  }
+  .qtable thead th { padding: 9px 10px; }
+  .qtable tbody tr { cursor: pointer; transition: background .12s; }
+  .qtable tbody tr:hover { background: #FAFBFC; }
+  .qtable tbody tr.selected { background: var(--primary-50); }
+  .qtable tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+  .qtable tbody tr:last-child td { border-bottom: none; }
+
+  /* Cell content */
+  .req-id { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-size: 11.5px; color: var(--text); white-space: nowrap; }
+  .req-date { font-size: 11.5px; color: var(--text-2); margin-top: 3px; }
+  .requester { font-weight: 600; color: var(--text); font-size: 13px; line-height: 1.2; }
+  .dept-badge {
+    display: inline-block; margin-top: 4px;
+    background: var(--bg); color: var(--text-2); font-size: 10.5px; font-weight: 600;
+    border: 1px solid var(--border); padding: 1px 7px; border-radius: 4px;
+    letter-spacing: 0.2px;
+  }
+  .dept-badge.prod-a { background: #F0F9FF; color: #075985; border-color: #BAE6FD; }
+  .dept-badge.prod-b { background: #FAF5FF; color: #6B21A8; border-color: #E9D5FF; }
+  .dept-badge.qc    { background: #ECFDF5; color: #065F46; border-color: #A7F3D0; }
+  .dept-badge.maint { background: #FFF7ED; color: #9A3412; border-color: #FED7AA; }
+
+  .mat-code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-size: 11.5px; color: var(--primary); white-space: nowrap; }
+  .mat-name { color: var(--text); font-size: 12.5px; margin-top: 3px; line-height: 1.3; }
+
+  .qty { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+  .qty .u { font-weight: 500; color: var(--text-2); margin-left: 3px; font-size: 11.5px; }
+  .stock-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+  .stock-bar { width: 56px; height: 4px; border-radius: 999px; background: var(--border); position: relative; margin-top: 6px; overflow: hidden; }
+  .stock-bar > i { display:block; height:100%; background: var(--success); border-radius: inherit; }
+  .stock-bar.warn > i { background: var(--warning); }
+  .stock-bar.crit > i { background: var(--error); }
+  .stock-num { font-weight: 600; color: var(--text); font-size: 13px; }
+  .stock-sub { font-size: 11px; color: var(--text-2); margin-top: 2px; }
+  .stock-warn { color: var(--warning); }
+  .stock-crit { color: var(--error); }
+
+  /* Status pills */
+  .pill-status {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px 4px 8px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.2px;
+    border: 1px solid transparent;
+  }
+  .pill-status .pdot { width: 6px; height: 6px; border-radius: 999px; }
+  .pill-status.pending { background: var(--warning-50); color: #92400E; border-color: var(--warning-100); }
+  .pill-status.pending .pdot { background: var(--warning); box-shadow: 0 0 0 2px rgba(245,158,11,.18); }
+  .pill-status.urgent  { background: var(--error-50); color: #991B1B; border-color: #FECACA; }
+  .pill-status.urgent .pdot { background: var(--error); box-shadow: 0 0 0 2px rgba(239,68,68,.18); }
+  .pill-status.approved { background: var(--success-50); color: #065F46; border-color: #A7F3D0; }
+  .pill-status.approved .pdot { background: var(--success); }
+
+  /* Actions cell */
+  .row-actions { display: inline-flex; align-items: center; gap: 4px; }
+  .qtable td:last-child, .qtable th:last-child { text-align: right; padding-right: 14px; }
+  .btn {
+    height: 28px; padding: 0 10px; border-radius: 6px;
+    border: 1px solid transparent;
+    font: inherit; font-size: 11.5px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer; transition: background .12s, border-color .12s;
+    white-space: nowrap;
+  }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { background: var(--bg); }
+  .btn-danger-ghost { background: var(--surface); color: var(--error); border-color: #FECACA; }
+  .btn-danger-ghost:hover { background: var(--error-50); }
+  .icon-mini {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface); display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-2); cursor: pointer;
+  }
+  .icon-mini:hover { background: var(--bg); color: var(--text); }
+
+  /* Pagination */
+  .pager {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-top: 1px solid var(--border-2);
+    color: var(--text-2); font-size: 12.5px;
+  }
+  .pager .pages { display: inline-flex; gap: 4px; }
+  .pager .pages > button {
+    min-width: 28px; height: 28px; padding: 0 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface);
+    font: inherit; font-size: 12px; font-weight: 600; color: var(--text-2);
+    cursor: pointer;
+  }
+  .pager .pages > button.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  /* ===== Slide-over ===== */
+  .slideover {
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow-panel);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    overflow: hidden;
+    position: relative;
+    z-index: 4;
+    animation: slideIn .25s ease-out;
+  }
+  @keyframes slideIn { from { transform: translateX(20px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+
+  .so-head {
+    padding: 16px 20px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .so-head .row1 { display: flex; align-items: center; justify-content: space-between; }
+  .so-head .req {
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 600; font-size: 13px; color: var(--text);
+    white-space: nowrap;
+  }
+  .so-head .req .chip {
+    background: var(--primary-50); color: var(--primary);
+    font-size: 10.5px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+    font-family: "IBM Plex Sans Thai","IBM Plex Sans", sans-serif; letter-spacing: 0.3px;
+  }
+  .so-head h3 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text); }
+  .so-head .meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; color: var(--text-2); font-size: 12px; }
+  .so-head .meta .sep { color: var(--text-3); }
+
+  .so-body {
+    padding: 18px 20px 20px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .so-section { display: flex; flex-direction: column; gap: 10px; }
+  .so-section > .title {
+    font-size: 11px; font-weight: 700; color: var(--text-3); letter-spacing: 0.7px; text-transform: uppercase;
+  }
+
+  .mat-card {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .mat-card .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .mat-card .code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 700; color: var(--primary); font-size: 12.5px; }
+  .mat-card .name { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 2px; line-height: 1.3; }
+  .mat-card .swatch {
+    width: 36px; height: 36px; border-radius: 8px; background: #DBEAFE;
+    display: inline-flex; align-items: center; justify-content: center; color: var(--primary);
+    flex-shrink: 0;
+  }
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1px;
+    background: var(--border); border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .stat { background: var(--surface); padding: 10px 12px; }
+  .stat .k { font-size: 10.5px; color: var(--text-2); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+  .stat .v { font-size: 17px; font-weight: 700; color: var(--text); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .stat .u { font-size: 11px; font-weight: 500; color: var(--text-2); margin-left: 3px; }
+  .stat.warn .v { color: var(--warning); }
+
+  .level-bar {
+    height: 8px; background: var(--border); border-radius: 999px; position: relative; overflow: hidden;
+  }
+  .level-bar > .fill { height: 100%; background: var(--warning); border-radius: inherit; }
+  .level-marks {
+    position: relative; height: 18px; font-size: 10.5px; color: var(--text-2); font-weight: 500;
+  }
+  .level-marks span { position: absolute; transform: translateX(-50%); }
+
+  .justify-box {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-size: 13px; line-height: 1.5; color: var(--text);
+  }
+  .justify-box .author { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 11.5px; color: var(--text-2); }
+  .justify-box .author .av { width: 22px; height: 22px; border-radius: 999px; background: #DBEAFE; color: var(--primary); font-size: 10px; font-weight: 700; display:inline-flex; align-items:center; justify-content:center; }
+
+  .alert {
+    display: flex; gap: 10px; padding: 10px 12px; border-radius: 8px;
+    background: var(--warning-50); border: 1px solid var(--warning-100); color: #92400E;
+    font-size: 12px; line-height: 1.4;
+  }
+  .alert .ico { color: var(--warning); flex-shrink: 0; }
+
+  textarea.so-textarea {
+    width: 100%; min-height: 84px; padding: 10px 12px; resize: vertical;
+    border: 1px solid var(--border); border-radius: 8px;
+    font: inherit; font-size: 13px; color: var(--text);
+    outline: none;
+  }
+  textarea.so-textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+
+  .so-foot {
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .so-foot .grow { flex: 1; }
+  .so-foot .btn { height: 38px; padding: 0 16px; font-size: 13px; }
+  .so-foot .btn-primary { box-shadow: 0 1px 2px rgba(37,99,235,.3); }
+
+  /* close button */
+  .so-close {
+    width: 28px; height: 28px; border-radius: 6px; border: none; background: transparent;
+    color: var(--text-2); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .so-close:hover { background: var(--bg); color: var(--text); }
+
+  /* small helpers */
+  .row { display: flex; align-items: center; gap: 8px; }
+  .right { display: flex; justify-content: flex-end; }
+
+  /* Scrollbars (subtle) */
+  .main::-webkit-scrollbar, .so-body::-webkit-scrollbar, .sidebar::-webkit-scrollbar { width: 8px; }
+  .main::-webkit-scrollbar-thumb, .so-body::-webkit-scrollbar-thumb, .sidebar::-webkit-scrollbar-thumb {
+    background: #E2E8F0; border-radius: 8px;
+  }
+  .main::-webkit-scrollbar-thumb:hover { background: #CBD5E1; }
+</style>
+</head>
+<body>
+
+<div class="stage"><div class="frame-wrap">
+<div class="frame" data-screen-label="Approval Queue">
+
+  <!-- ===== Top nav ===== -->
+  <header class="topnav">
+    <div class="brand">
+      <img src="assets/gs-logo.png" alt="GS Battery" />
+      <div class="vbar"></div>
+      <div class="product">
+        Material Ops
+        <small>Raw Material</small>
+      </div>
+    </div>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <span>Planning</span>
+      <svg class="sep" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+      <span class="here">Material Management <span class="th">/ การจัดการวัตถุดิบ</span></span>
+    </nav>
+
+    <div class="nav-right">
+      <span class="role-badge">
+        <span class="dot"></span>
+        Planning Officer
+      </span>
+
+      <button class="icon-btn" title="Search">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+
+      <button class="icon-btn" title="Notifications">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+        <span class="ping">3</span>
+      </button>
+
+      <div class="avatar-chip">
+        <span class="avatar">BB</span>
+        <span class="name">Burased B.</span>
+        <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== Body ===== -->
+  <div class="body">
+
+    <!-- ===== Sidebar ===== -->
+    <aside class="sidebar">
+      <div class="nav-section">Dashboard</div>
+      <a class="nav-item">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+        <span class="grow">Overview</span>
+      </a>
+
+      <div class="nav-section">Inventory</div>
+      <a class="nav-item">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+        <span class="grow">Register Material</span>
+      </a>
+      <a class="nav-item">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v13h18V7"/><path d="M3 7l4-4h10l4 4"/><path d="M8 11h8"/></svg>
+        <span class="grow">Stock Levels</span>
+      </a>
+      <a class="nav-item">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13h6"/><path d="M9 17h4"/></svg>
+        <span class="grow">Material Master</span>
+      </a>
+
+      <div class="nav-section">Requests</div>
+      <a class="nav-item active">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span class="grow">Pending Approval</span>
+        <span class="pill">7</span>
+      </a>
+      <a class="nav-item muted">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 6-6"/></svg>
+        <span class="grow">Approval History</span>
+      </a>
+
+      <div class="nav-section">Reports</div>
+      <a class="nav-item">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9"/><path d="M21 3v6h-6"/><path d="M12 7v5l3 2"/></svg>
+        <span class="grow">Movement Log</span>
+      </a>
+
+      <div class="sidebar-foot">
+        <span class="live"></span>
+        <div>
+          <div style="color:var(--text); font-weight:600;">Plant 02 · Samut Prakan</div>
+          <div>Sync · 12s ago</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ===== Main ===== -->
+    <main class="main">
+
+      <div class="page-head">
+        <div>
+          <h1>Material Management</h1>
+          <div class="sub">Review incoming materials and approve production requests.</div>
+        </div>
+        <div class="row">
+          <button class="btn-ghost" title="Export CSV">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export
+          </button>
+          <button class="btn btn-primary" style="height:32px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>
+            New Receipt
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8V21H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+          Register Incoming Material
+        </div>
+        <div class="tab active">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Approval Queue
+          <span class="count">7</span>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="card filters">
+        <div class="field">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <div style="display:flex; flex-direction:column; line-height:1.1;">
+            <span class="lbl">Date range</span>
+            <span class="val">15 – 28 May 2026</span>
+          </div>
+          <svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <div class="field">
+          <div style="display:flex; flex-direction:column; line-height:1.1;">
+            <span class="lbl">Material type</span>
+            <span class="val">All types</span>
+          </div>
+          <svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <div class="field">
+          <div style="display:flex; flex-direction:column; line-height:1.1;">
+            <span class="lbl">Requester</span>
+            <span class="val">All requesters</span>
+          </div>
+          <svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+<div class="field search">
+          <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" placeholder="Search by request ID, material code, or requester…" />
+          <span style="font-size:11px; color: var(--text-3); padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; font-weight: 600;">⌘K</span>
+        </div>
+      </div>
+
+      <!-- Approval Table -->
+      <div class="card">
+        <div class="table-toolbar">
+          <div class="left">
+            <h2>Approval Queue</h2>
+            <span class="count-pill">7 pending · 1 urgent</span>
+          </div>
+          <div class="right">
+            <button class="btn-ghost">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M7 12h10"/><path d="M10 18h4"/></svg>
+              Sort: Oldest first
+            </button>
+            <button class="btn-ghost">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+              Columns
+            </button>
+          </div>
+        </div>
+
+        <div class="status-strip" role="tablist" aria-label="Status filter">
+          <span class="lbl">Status</span>
+          <div class="seg-status">
+            <button class="on"><span class="dot p"></span>Pending</button>
+            <button><span class="dot a"></span>Approved</button>
+            <button><span class="dot r"></span>Rejected</button>
+          </div>
+          <span style="flex:1;"></span>
+          <span style="font-size:11.5px; color:var(--text-2);">Auto-refresh <strong style="color:var(--text);">30s</strong></span>
+        </div>
+
+        <table class="qtable" id="qtable">
+            <thead>
+              <tr>
+                <th style="width:104px;">Request</th>
+                <th style="width:104px;">Requester</th>
+                <th>Material</th>
+                <th style="width:68px;">Qty</th>
+                <th style="width:96px;">Available</th>
+                <th style="width:82px;">Status</th>
+                <th style="width:100px; text-align:right;">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+
+              <!-- Row 1 -->
+              <tr class="selected" data-id="0">
+                <td>
+                  <div class="req-id">REQ-2026-0142</div>
+                  <div class="req-date">28 May, 09:14</div>
+                </td>
+                <td>
+                  <div class="requester">Somchai P.</div>
+                  <span class="dept-badge prod-a">Production A</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-LEAD-001</div>
+                  <div class="mat-name">ตะกั่วบริสุทธิ์ 99.9% · Pure Lead Ingot</div>
+                </td>
+                <td>
+                  <div class="qty">2,400 <span class="u">kg</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".7" fill="#F59E0B"/></svg>
+                    <span class="stock-num stock-warn">2,850</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">kg</span>
+                  </div>
+                  <div class="stock-bar warn"><i style="width:84%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 2 -->
+              <tr data-id="1">
+                <td>
+                  <div class="req-id">REQ-2026-0141</div>
+                  <div class="req-date">28 May, 08:42</div>
+                </td>
+                <td>
+                  <div class="requester">Niran T.</div>
+                  <span class="dept-badge prod-b">Production B</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-SULF-014</div>
+                  <div class="mat-name">Sulfuric Acid 98% · กรดซัลฟิวริก</div>
+                </td>
+                <td>
+                  <div class="qty">1,800 <span class="u">L</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <span class="stock-num">12,400</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">L</span>
+                  </div>
+                  <div class="stock-bar"><i style="width:14%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 3 -->
+              <tr data-id="2">
+                <td>
+                  <div class="req-id">REQ-2026-0140</div>
+                  <div class="req-date">28 May, 08:05</div>
+                </td>
+                <td>
+                  <div class="requester">Pranee S.</div>
+                  <span class="dept-badge qc">QC</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-SEP-007</div>
+                  <div class="mat-name">PE Separator Roll · แผ่นกั้นโพลีเอทิลีน</div>
+                </td>
+                <td>
+                  <div class="qty">320 <span class="u">roll</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".7" fill="#EF4444"/></svg>
+                    <span class="stock-num stock-crit">340</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">roll</span>
+                  </div>
+                  <div class="stock-bar crit"><i style="width:94%"></i></div>
+                </td>
+                <td><span class="pill-status urgent"><span class="pdot"></span>Urgent</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 4 -->
+              <tr data-id="3">
+                <td>
+                  <div class="req-id">REQ-2026-0139</div>
+                  <div class="req-date">27 May, 17:48</div>
+                </td>
+                <td>
+                  <div class="requester">Anucha K.</div>
+                  <span class="dept-badge maint">Maintenance</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-CASE-022</div>
+                  <div class="mat-name">PP Battery Case (N50) · กล่องแบตเตอรี่ PP</div>
+                </td>
+                <td>
+                  <div class="qty">800 <span class="u">pcs</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <span class="stock-num">6,200</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">pcs</span>
+                  </div>
+                  <div class="stock-bar"><i style="width:13%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 5 -->
+              <tr data-id="4">
+                <td>
+                  <div class="req-id">REQ-2026-0138</div>
+                  <div class="req-date">27 May, 16:22</div>
+                </td>
+                <td>
+                  <div class="requester">Wirot J.</div>
+                  <span class="dept-badge prod-a">Production A</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-EXPN-003</div>
+                  <div class="mat-name">Negative Expander · สารขยายตัวขั้วลบ</div>
+                </td>
+                <td>
+                  <div class="qty">120 <span class="u">kg</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <span class="stock-num">1,840</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">kg</span>
+                  </div>
+                  <div class="stock-bar"><i style="width:6%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 6 -->
+              <tr data-id="5">
+                <td>
+                  <div class="req-id">REQ-2026-0137</div>
+                  <div class="req-date">27 May, 14:30</div>
+                </td>
+                <td>
+                  <div class="requester">Kanya R.</div>
+                  <span class="dept-badge prod-b">Production B</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-TIN-009</div>
+                  <div class="mat-name">Tin Alloy Bar · แท่งดีบุกผสม</div>
+                </td>
+                <td>
+                  <div class="qty">450 <span class="u">kg</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <span class="stock-num">3,250</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">kg</span>
+                  </div>
+                  <div class="stock-bar"><i style="width:14%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 7 -->
+              <tr data-id="6">
+                <td>
+                  <div class="req-id">REQ-2026-0136</div>
+                  <div class="req-date">27 May, 11:08</div>
+                </td>
+                <td>
+                  <div class="requester">Suchart M.</div>
+                  <span class="dept-badge qc">QC</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-TERM-018</div>
+                  <div class="mat-name">Brass Terminal Post · ขั้วทองเหลือง</div>
+                </td>
+                <td>
+                  <div class="qty">2,000 <span class="u">pcs</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <span class="stock-num">9,800</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">pcs</span>
+                  </div>
+                  <div class="stock-bar"><i style="width:20%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+              <!-- Row 8 -->
+              <tr data-id="7">
+                <td>
+                  <div class="req-id">REQ-2026-0135</div>
+                  <div class="req-date">27 May, 09:52</div>
+                </td>
+                <td>
+                  <div class="requester">Mali C.</div>
+                  <span class="dept-badge maint">Maintenance</span>
+                </td>
+                <td>
+                  <div class="mat-code">RM-OXIDE-005</div>
+                  <div class="mat-name">Lead Oxide Powder · ผงตะกั่วออกไซด์</div>
+                </td>
+                <td>
+                  <div class="qty">5,500 <span class="u">kg</span></div>
+                </td>
+                <td>
+                  <div class="stock-row">
+                    <span class="stock-num">42,100</span>
+                    <span style="color:var(--text-2); font-size:11.5px;">kg</span>
+                  </div>
+                  <div class="stock-bar"><i style="width:13%"></i></div>
+                </td>
+                <td><span class="pill-status pending"><span class="pdot"></span>Pending</span></td>
+                <td>
+                  <div class="row-actions" style="justify-content:flex-end;">
+                    <button class="btn btn-primary">Approve</button>
+                    <button class="icon-mini" title="More">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+
+            </tbody>
+          </table>
+
+        <div class="pager">
+          <span>Showing <strong style="color:var(--text);">1 – 8</strong> of 7 pending requests</span>
+          <div class="pages">
+            <button>‹</button>
+            <button class="on">1</button>
+            <button>›</button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== Slide-over panel ===== -->
+    <aside class="slideover" aria-label="Request detail">
+      <div class="so-head">
+        <div class="row1">
+          <div class="req">
+            <span class="chip">REQUEST</span>
+            REQ-2026-0142
+          </div>
+          <button class="so-close" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <h3>Pure Lead Ingot — 2,400 kg</h3>
+        <div class="meta">
+          <span class="pill-status pending"><span class="pdot"></span>Pending</span>
+          <span class="sep">·</span>
+          <span>Submitted <strong style="color:var(--text);">28 May, 09:14</strong></span>
+          <span class="sep">·</span>
+          <span>SLA <strong style="color:var(--warning);">4h 12m</strong> left</span>
+        </div>
+      </div>
+
+      <div class="so-body">
+
+        <!-- Summary -->
+        <div class="so-section">
+          <div class="title">Request summary</div>
+          <div class="stats">
+            <div class="stat">
+              <div class="k">Requested</div>
+              <div class="v">2,400<span class="u">kg</span></div>
+            </div>
+            <div class="stat warn">
+              <div class="k">Available</div>
+              <div class="v">2,850<span class="u">kg</span></div>
+            </div>
+            <div class="stat">
+              <div class="k">After issue</div>
+              <div class="v">450<span class="u">kg</span></div>
+            </div>
+          </div>
+
+          <div class="alert">
+            <svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r=".7" fill="currentColor"/></svg>
+            <span>This request consumes <strong>84%</strong> of available stock and will drop inventory below the <strong>1,000 kg</strong> reorder level.</span>
+          </div>
+        </div>
+
+        <!-- Material -->
+        <div class="so-section">
+          <div class="title">Material details</div>
+          <div class="mat-card">
+            <div class="head">
+              <div>
+                <div class="code">RM-LEAD-001</div>
+                <div class="name">ตะกั่วบริสุทธิ์ 99.9% · Pure Lead Ingot</div>
+              </div>
+              <div class="swatch">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="1"/><path d="M3 11h18"/><path d="M8 7V4h8v3"/></svg>
+              </div>
+            </div>
+            <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-2); padding-top:4px; border-top:1px dashed var(--border);">
+              <span>Warehouse <strong style="color:var(--text);">WH-A · Bay 04</strong></span>
+              <span>Lot <strong style="color:var(--text);">LOT-2605-A</strong></span>
+            </div>
+
+            <div style="margin-top:6px;">
+              <div style="display:flex; justify-content:space-between; font-size:11.5px; color: var(--text-2); margin-bottom: 6px;">
+                <span>Reorder 1,000 kg</span>
+                <span>Capacity 5,000 kg</span>
+              </div>
+              <div class="level-bar"><div class="fill" style="width:57%"></div></div>
+              <div style="display:flex; justify-content:space-between; margin-top:6px; font-size:11px; color: var(--text-2);">
+                <span>0</span>
+                <span style="color: var(--warning); font-weight:600;">↑ 2,850 current</span>
+                <span>5,000</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Justification -->
+        <div class="so-section">
+          <div class="title">Justification from requester</div>
+          <div class="justify-box">
+            Required for batch <strong>BATCH-2026-N50-118</strong> production run starting tonight (28 May, 22:00). Current paste mixing line is calibrated and downstream curing schedule cannot slip without missing the Friday shipment to Bangkok DC.
+            <div class="author">
+              <span class="av">SP</span>
+              <span>Somchai P. · Production A · 28 May, 09:14</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Approval comment -->
+        <div class="so-section">
+          <div class="title">Approval comment <span style="color:var(--text-3); font-weight:500; text-transform:none; letter-spacing:0;">(optional)</span></div>
+          <textarea class="so-textarea" placeholder="Add a note for the requester or audit log…">Approved — please coordinate with WH-A for forklift availability before 21:00.</textarea>
+        </div>
+
+      </div>
+
+      <div class="so-foot">
+        <button class="btn btn-secondary" style="height:38px; padding:0 14px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          Reject
+        </button>
+        <span class="grow"></span>
+        <button class="btn btn-secondary" style="height:38px; padding:0 12px;" title="Save as draft">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        </button>
+        <button class="btn btn-primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Approve &amp; Issue
+        </button>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+  // Light interactivity: row selection updates header chip in slide-over
+  const rows = document.querySelectorAll('#qtable tbody tr');
+  const reqLabel = document.querySelector('.so-head .req');
+  rows.forEach(r => {
+    r.addEventListener('click', (e) => {
+      // Don't hijack clicks on buttons inside row
+      if (e.target.closest('button')) return;
+      rows.forEach(x => x.classList.remove('selected'));
+      r.classList.add('selected');
+      const id = r.querySelector('.req-id')?.textContent || '';
+      if (reqLabel) reqLabel.innerHTML = '<span class="chip">REQUEST</span> ' + id;
+    });
+  });
+
+  // Tab toggle (just visual)
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+    });
+  });
+
+  // Status segmented
+  document.querySelectorAll('.seg-status button').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('.seg-status button').forEach(x => x.classList.remove('on'));
+      b.classList.add('on');
+    });
+  });
+</script>
+
+</div></div>
+<script>
+  // Fit 1440×900 frame to viewport while preserving aspect
+  (function () {
+    const wrap = document.querySelector('.frame-wrap');
+    function fit() {
+      const margin = 16;
+      const sx = (window.innerWidth - margin * 2) / 1440;
+      const sy = (window.innerHeight - margin * 2) / 900;
+      const s = Math.min(sx, sy, 1);
+      const frame = wrap.firstElementChild;
+      wrap.style.width = (1440 * s) + 'px';
+      wrap.style.height = (900 * s) + 'px';
+      frame.style.transformOrigin = 'top left';
+      frame.style.transform = `scale(${s})`;
+    }
+    fit();
+    window.addEventListener('resize', fit);
+  })();
+</script>
+</body>
+</html>

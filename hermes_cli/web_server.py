@@ -10,12 +10,17 @@ Usage:
 """
 
 import asyncio
+import errno
 import hmac
 import importlib.util
 import json
 import logging
+import mimetypes
 import os
 import secrets
+import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -52,7 +57,7 @@ from gateway.status import get_running_pid, read_runtime_status
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
 except ImportError:
@@ -116,10 +121,24 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/config/defaults",
     "/api/config/schema",
     "/api/model/info",
-    "/api/dashboard/themes",
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
 })
+
+
+def _has_valid_session_token_query(request: Request) -> bool:
+    """Accept the session token as a `?_token=` query param.
+
+    `<img src>` and `<a href>` can't carry our custom X-Hermes-Session-Token
+    header — the browser strips custom headers on subresource loads — so
+    endpoints that the UI needs to embed (file downloads, image previews)
+    rely on this fallback. Loopback-only by default; for non-loopback binds
+    the operator has already opted into the trust posture.
+    """
+    qs_token = request.query_params.get("_token", "")
+    if not qs_token:
+        return False
+    return hmac.compare_digest(qs_token.encode(), _SESSION_TOKEN.encode())
 
 
 def _has_valid_session_token(request: Request) -> bool:
@@ -238,7 +257,10 @@ async def auth_middleware(request: Request, call_next):
     """Require the session token on all /api/ routes except the public list."""
     path = request.url.path
     if path.startswith("/api/") and path not in _PUBLIC_API_PATHS:
-        if not _has_valid_session_token(request):
+        if not (
+            _has_valid_session_token(request)
+            or _has_valid_session_token_query(request)
+        ):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Unauthorized"},
@@ -293,11 +315,6 @@ _SCHEMA_OVERRIDES: Dict[str, Dict[str, Any]] = {
         "type": "select",
         "description": "CLI visual theme",
         "options": ["default", "ares", "mono", "slate"],
-    },
-    "dashboard.theme": {
-        "type": "select",
-        "description": "Web dashboard visual theme",
-        "options": ["default", "midnight", "ember", "mono", "cyberpunk", "rose"],
     },
     "display.resume_display": {
         "type": "select",
@@ -2377,11 +2394,33 @@ class ApiKeyUpdate(BaseModel):
     sync_to_sbx_secret: bool = True
 
 
+def _env_writable() -> bool:
+    """True when the process can write ~/.hermes/.env.
+
+    The sandbox launcher now bind-mounts ~/.hermes :rw so saving from inside
+    the microVM works — but older sandboxes were created with :ro and there
+    are still hosts where ~/.hermes lives on a read-only filesystem.  We probe
+    `os.access` (or attempt-touch when the file doesn't yet exist) so the UI
+    can disable the Save controls in those cases instead of letting the user
+    type a key only to hit a 409.
+    """
+    env_path = _sopify_env_file.env_path()
+    try:
+        if env_path.exists():
+            return os.access(str(env_path), os.W_OK)
+        # File doesn't exist yet — check the parent dir's writability.
+        parent = env_path.parent
+        return parent.is_dir() and os.access(str(parent), os.W_OK)
+    except OSError:
+        return False
+
+
 def _api_key_status_list() -> list[dict]:
     """Render the provider registry against the current key stores."""
     env_keys = _sopify_env_file.read_keys()
     sbx_services = _sopify_sbx_secret.list_services()
     sbx_ok = _sopify_sbx_secret.is_available()
+    env_writable = _env_writable()
     out: list[dict] = []
     for p in _sopify_providers.PROVIDERS:
         env_value = env_keys.get(p.env_var, "").strip().strip('"').strip("'")
@@ -2398,6 +2437,7 @@ def _api_key_status_list() -> list[dict]:
             "set_in_sbx_secret": in_sbx,
             "redacted_value": redact_key(env_value) if set_in_env else None,
             "sbx_available": sbx_ok,
+            "env_writable": env_writable,
         })
     return out
 
@@ -2441,6 +2481,17 @@ async def set_api_key(body: ApiKeyUpdate, request: Request):
     # 1) Write to ~/.hermes/.env (always — needed for non-sandbox callers).
     try:
         _sopify_env_file.set_keys({provider.env_var: key})
+    except OSError as exc:
+        # Defensive: catch the EROFS case explicitly so legacy sandboxes
+        # created with the old :ro mount (or hosts whose ~/.hermes lives on a
+        # read-only filesystem) surface as 409 instead of a generic 500.
+        _log.exception("PUT /api/providers/api-key — env write failed for %s", provider.id)
+        if exc.errno == errno.EROFS:
+            raise HTTPException(
+                status_code=409,
+                detail="~/.hermes/.env is on a read-only filesystem — cannot persist the key here.",
+            )
+        raise HTTPException(status_code=500, detail="Failed to write ~/.hermes/.env")
     except Exception:
         _log.exception("PUT /api/providers/api-key — env write failed for %s", provider.id)
         raise HTTPException(status_code=500, detail="Failed to write ~/.hermes/.env")
@@ -2536,6 +2587,15 @@ async def test_api_key(provider_id: str, request: Request):
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
     elif provider.id == "openai":
         url = "https://api.openai.com/v1/models"
+        headers = {"Authorization": f"Bearer {key}"}
+    elif provider.id == "alibaba":
+        # Singapore intl endpoint (DASHSCOPE_BASE_URL override is supported
+        # at the agent runtime, but for the test probe we hit the canonical
+        # endpoint defined in hermes_cli.auth — same one the agent uses by
+        # default).  Cheap GET /models confirms the key is accepted.
+        base = os.environ.get("DASHSCOPE_BASE_URL", "").rstrip("/") \
+            or "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+        url = f"{base}/models"
         headers = {"Authorization": f"Bearer {key}"}
     else:
         return {"tested": False, "ok": False, "reason": "test not implemented for this provider"}
@@ -3941,319 +4001,6 @@ def mount_spa(application: FastAPI):
 
 
 # ---------------------------------------------------------------------------
-# Dashboard theme endpoints
-# ---------------------------------------------------------------------------
-
-# Built-in dashboard themes — label + description only.  The actual color
-# definitions live in the frontend (web/src/themes/presets.ts).
-_BUILTIN_DASHBOARD_THEMES = [
-    {"name": "sopify",        "label": "Sopify",              "description": "Clean light dashboard — blue primary, Roboto, Rhino-style tokens"},
-    {"name": "default",       "label": "Hermes Teal (legacy)","description": "Classic dark teal — the original upstream Hermes look"},
-    {"name": "default-large", "label": "Hermes Teal (Large)", "description": "Hermes Teal with bigger fonts and roomier spacing"},
-    {"name": "midnight",      "label": "Midnight",            "description": "Deep blue-violet with cool accents"},
-    {"name": "ember",     "label": "Ember",          "description": "Warm crimson and bronze — forge vibes"},
-    {"name": "mono",      "label": "Mono",           "description": "Clean grayscale — minimal and focused"},
-    {"name": "cyberpunk", "label": "Cyberpunk",      "description": "Neon green on black — matrix terminal"},
-    {"name": "rose",      "label": "Rosé",           "description": "Soft pink and warm ivory — easy on the eyes"},
-]
-
-
-def _parse_theme_layer(value: Any, default_hex: str, default_alpha: float = 1.0) -> Optional[Dict[str, Any]]:
-    """Normalise a theme layer spec from YAML into `{hex, alpha}` form.
-
-    Accepts shorthand (a bare hex string) or full dict form.  Returns
-    ``None`` on garbage input so the caller can fall back to a built-in
-    default rather than blowing up.
-    """
-    if value is None:
-        return {"hex": default_hex, "alpha": default_alpha}
-    if isinstance(value, str):
-        return {"hex": value, "alpha": default_alpha}
-    if isinstance(value, dict):
-        hex_val = value.get("hex", default_hex)
-        alpha_val = value.get("alpha", default_alpha)
-        if not isinstance(hex_val, str):
-            return None
-        try:
-            alpha_f = float(alpha_val)
-        except (TypeError, ValueError):
-            alpha_f = default_alpha
-        return {"hex": hex_val, "alpha": max(0.0, min(1.0, alpha_f))}
-    return None
-
-
-_THEME_DEFAULT_TYPOGRAPHY: Dict[str, str] = {
-    "fontSans": 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-    "fontMono": 'ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace',
-    "baseSize": "15px",
-    "lineHeight": "1.55",
-    "letterSpacing": "0",
-}
-
-_THEME_DEFAULT_LAYOUT: Dict[str, str] = {
-    "radius": "0.5rem",
-    "density": "comfortable",
-}
-
-_THEME_OVERRIDE_KEYS = {
-    "card", "cardForeground", "popover", "popoverForeground",
-    "primary", "primaryForeground", "secondary", "secondaryForeground",
-    "muted", "mutedForeground", "accent", "accentForeground",
-    "destructive", "destructiveForeground", "success", "warning",
-    "border", "input", "ring",
-}
-
-# Well-known named asset slots themes can populate.  Any other keys under
-# ``assets.custom`` are exposed as ``--theme-asset-custom-<key>`` CSS vars
-# for plugin/shell use.
-_THEME_NAMED_ASSET_KEYS = {"bg", "hero", "logo", "crest", "sidebar", "header"}
-
-# Component-style buckets themes can override.  The value under each bucket
-# is a mapping from camelCase property name to CSS string; each pair emits
-# ``--component-<bucket>-<kebab-property>`` on :root.  The frontend's shell
-# components (Card, App header, Backdrop, etc.) consume these vars so themes
-# can restyle chrome (clip-path, border-image, segmented progress, etc.)
-# without shipping their own CSS.
-_THEME_COMPONENT_BUCKETS = {
-    "card", "header", "footer", "sidebar", "tab",
-    "progress", "badge", "backdrop", "page",
-}
-
-_THEME_LAYOUT_VARIANTS = {"standard", "cockpit", "tiled"}
-
-# Cap on customCSS length so a malformed/oversized theme YAML can't blow up
-# the response payload or the <style> tag.  32 KiB is plenty for every
-# practical reskin (the Strike Freedom demo is ~2 KiB).
-_THEME_CUSTOM_CSS_MAX = 32 * 1024
-
-
-def _normalise_theme_definition(data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Normalise a user theme YAML into the wire format `ThemeProvider`
-    expects.  Returns ``None`` if the theme is unusable.
-
-    Accepts both the full schema (palette/typography/layout) and a loose
-    form with bare hex strings, so hand-written YAMLs stay friendly.
-    """
-    if not isinstance(data, dict):
-        return None
-    name = data.get("name")
-    if not isinstance(name, str) or not name.strip():
-        return None
-
-    # Palette
-    palette_src = data.get("palette", {}) if isinstance(data.get("palette"), dict) else {}
-    # Allow top-level `colors.background` as a shorthand too.
-    colors_src = data.get("colors", {}) if isinstance(data.get("colors"), dict) else {}
-
-    def _layer(key: str, default_hex: str, default_alpha: float = 1.0) -> Dict[str, Any]:
-        spec = palette_src.get(key, colors_src.get(key))
-        parsed = _parse_theme_layer(spec, default_hex, default_alpha)
-        return parsed if parsed is not None else {"hex": default_hex, "alpha": default_alpha}
-
-    palette = {
-        "background": _layer("background", "#041c1c", 1.0),
-        "midground": _layer("midground", "#ffe6cb", 1.0),
-        "foreground": _layer("foreground", "#ffffff", 0.0),
-        "warmGlow": palette_src.get("warmGlow") or data.get("warmGlow") or "rgba(255, 189, 56, 0.35)",
-        "noiseOpacity": 1.0,
-    }
-    raw_noise = palette_src.get("noiseOpacity", data.get("noiseOpacity"))
-    try:
-        palette["noiseOpacity"] = float(raw_noise) if raw_noise is not None else 1.0
-    except (TypeError, ValueError):
-        palette["noiseOpacity"] = 1.0
-
-    # Typography
-    typo_src = data.get("typography", {}) if isinstance(data.get("typography"), dict) else {}
-    typography = dict(_THEME_DEFAULT_TYPOGRAPHY)
-    for key in ("fontSans", "fontMono", "fontDisplay", "fontUrl", "baseSize", "lineHeight", "letterSpacing"):
-        val = typo_src.get(key)
-        if isinstance(val, str) and val.strip():
-            typography[key] = val
-
-    # Layout
-    layout_src = data.get("layout", {}) if isinstance(data.get("layout"), dict) else {}
-    layout = dict(_THEME_DEFAULT_LAYOUT)
-    radius = layout_src.get("radius")
-    if isinstance(radius, str) and radius.strip():
-        layout["radius"] = radius
-    density = layout_src.get("density")
-    if isinstance(density, str) and density in {"compact", "comfortable", "spacious"}:
-        layout["density"] = density
-
-    # Color overrides — keep only valid keys with string values.
-    overrides_src = data.get("colorOverrides", {})
-    color_overrides: Dict[str, str] = {}
-    if isinstance(overrides_src, dict):
-        for key, val in overrides_src.items():
-            if key in _THEME_OVERRIDE_KEYS and isinstance(val, str) and val.strip():
-                color_overrides[key] = val
-
-    # Assets — named slots + arbitrary user-defined keys.  Values must be
-    # strings (URLs or CSS ``url(...)``/``linear-gradient(...)`` expressions).
-    # We don't fetch remote assets here; the frontend just injects them as
-    # CSS vars.  Empty values are dropped so a theme can explicitly clear a
-    # slot by setting ``hero: ""``.
-    assets_out: Dict[str, Any] = {}
-    assets_src = data.get("assets", {}) if isinstance(data.get("assets"), dict) else {}
-    for key in _THEME_NAMED_ASSET_KEYS:
-        val = assets_src.get(key)
-        if isinstance(val, str) and val.strip():
-            assets_out[key] = val
-    custom_assets_src = assets_src.get("custom")
-    if isinstance(custom_assets_src, dict):
-        custom_assets: Dict[str, str] = {}
-        for key, val in custom_assets_src.items():
-            if (
-                isinstance(key, str)
-                and key.replace("-", "").replace("_", "").isalnum()
-                and isinstance(val, str)
-                and val.strip()
-            ):
-                custom_assets[key] = val
-        if custom_assets:
-            assets_out["custom"] = custom_assets
-
-    # Custom CSS — raw CSS text the frontend injects as a scoped <style>
-    # tag on theme apply.  Clipped to _THEME_CUSTOM_CSS_MAX to keep the
-    # payload bounded.  We intentionally do NOT parse/sanitise the CSS
-    # here — the dashboard is localhost-only and themes are user-authored
-    # YAML in ~/.hermes/, same trust level as the config file itself.
-    custom_css_val = data.get("customCSS")
-    custom_css: Optional[str] = None
-    if isinstance(custom_css_val, str) and custom_css_val.strip():
-        custom_css = custom_css_val[:_THEME_CUSTOM_CSS_MAX]
-
-    # Component style overrides — per-bucket dicts of camelCase CSS
-    # property -> CSS string.  The frontend converts these into CSS vars
-    # that shell components (Card, App header, Backdrop) consume.
-    component_styles_src = data.get("componentStyles", {})
-    component_styles: Dict[str, Dict[str, str]] = {}
-    if isinstance(component_styles_src, dict):
-        for bucket, props in component_styles_src.items():
-            if bucket not in _THEME_COMPONENT_BUCKETS or not isinstance(props, dict):
-                continue
-            clean: Dict[str, str] = {}
-            for prop, value in props.items():
-                if (
-                    isinstance(prop, str)
-                    and prop.replace("-", "").replace("_", "").isalnum()
-                    and isinstance(value, (str, int, float))
-                    and str(value).strip()
-                ):
-                    clean[prop] = str(value)
-            if clean:
-                component_styles[bucket] = clean
-
-    layout_variant_src = data.get("layoutVariant")
-    layout_variant = (
-        layout_variant_src
-        if isinstance(layout_variant_src, str) and layout_variant_src in _THEME_LAYOUT_VARIANTS
-        else "standard"
-    )
-
-    result: Dict[str, Any] = {
-        "name": name,
-        "label": data.get("label") or name,
-        "description": data.get("description", ""),
-        "palette": palette,
-        "typography": typography,
-        "layout": layout,
-        "layoutVariant": layout_variant,
-    }
-    if color_overrides:
-        result["colorOverrides"] = color_overrides
-    if assets_out:
-        result["assets"] = assets_out
-    if custom_css is not None:
-        result["customCSS"] = custom_css
-    if component_styles:
-        result["componentStyles"] = component_styles
-    return result
-
-
-def _discover_user_themes() -> list:
-    """Scan ~/.hermes/dashboard-themes/*.yaml for user-created themes.
-
-    Returns a list of fully-normalised theme definitions ready to ship
-    to the frontend, so the client can apply them without a secondary
-    round-trip or a built-in stub.
-    """
-    themes_dir = get_hermes_home() / "dashboard-themes"
-    if not themes_dir.is_dir():
-        return []
-    result = []
-    for f in sorted(themes_dir.glob("*.yaml")):
-        try:
-            data = yaml.safe_load(f.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        normalised = _normalise_theme_definition(data)
-        if normalised is not None:
-            result.append(normalised)
-    return result
-
-
-@app.get("/api/dashboard/themes")
-async def get_dashboard_themes():
-    """Return available themes and the currently active one.
-
-    Built-in entries ship name/label/description only (the frontend owns
-    their full definitions in `web/src/themes/presets.ts`).  User themes
-    from `~/.hermes/dashboard-themes/*.yaml` ship with their full
-    normalised definition under `definition`, so the client can apply
-    them without a stub.
-    """
-    config = load_config()
-    active = cfg_get(config, "dashboard", "theme", default="sopify")
-    # Sopify migration: if the user previously selected a Hermes built-in
-    # via the legacy picker, promote to sopify so the new branding sticks.
-    _HERMES_LEGACY = {"default", "default-large", "midnight", "ember",
-                      "mono", "cyberpunk", "rose"}
-    if active in _HERMES_LEGACY:
-        active = "sopify"
-        if "dashboard" not in config:
-            config["dashboard"] = {}
-        config["dashboard"]["theme"] = "sopify"
-        try:
-            save_config(config)
-        except Exception:
-            pass
-    user_themes = _discover_user_themes()
-    seen = set()
-    themes = []
-    for t in _BUILTIN_DASHBOARD_THEMES:
-        seen.add(t["name"])
-        themes.append(t)
-    for t in user_themes:
-        if t["name"] in seen:
-            continue
-        themes.append({
-            "name": t["name"],
-            "label": t["label"],
-            "description": t["description"],
-            "definition": t,
-        })
-        seen.add(t["name"])
-    return {"themes": themes, "active": active}
-
-
-class ThemeSetBody(BaseModel):
-    name: str
-
-
-@app.put("/api/dashboard/theme")
-async def set_dashboard_theme(body: ThemeSetBody):
-    """Set the active dashboard theme (persists to config.yaml)."""
-    config = load_config()
-    if "dashboard" not in config:
-        config["dashboard"] = {}
-    config["dashboard"]["theme"] = body.name
-    save_config(config)
-    return {"ok": True, "theme": body.name}
-
-
-# ---------------------------------------------------------------------------
 # Dashboard plugin system
 # ---------------------------------------------------------------------------
 
@@ -4673,6 +4420,1223 @@ async def serve_plugin_asset(plugin_name: str, file_path: str):
         media_type=media_type,
         headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Workspace file browser — list / read / upload / download / delete / rename
+# / mkdir under the cwd that `sopify dashboard` was launched from. That cwd
+# is also what `sbx_launcher` bind-mounts as /workspace inside the sandbox,
+# so the host paths exposed here are exactly what the in-sandbox agent sees
+# (and writes back to) as /workspace/...
+#
+# Path-traversal guard: every request is .resolve()d and re-checked against
+# _FILES_ROOT. `.resolve()` follows symlinks, so a symlink in the workspace
+# that points outside it (e.g. into ~/.ssh) is rejected — important since
+# this UI is intended for non-technical users.
+# ---------------------------------------------------------------------------
+
+# Captured at import time: cwd at the moment `sopify dashboard` starts the
+# uvicorn process. Stable for the lifetime of the dashboard.
+_FILES_ROOT = Path.cwd().resolve()
+
+# Two roots are exposed to the Files page:
+#   - "workspace": the cwd dashboard launched from (bind-mounted into sbx).
+#                  Same content the agent's shell sees as its workspace.
+#   - "hermes":    HERMES_HOME (default ~/.hermes) which inside the sbx is
+#                  /home/sopify/.hermes/ — holds vibe-projects/, state.db,
+#                  logs/, dashboard-themes/, plugins/, etc. Container-local
+#                  (vibe projects live here, NOT on the host filesystem),
+#                  so this is the only way to inspect them via the dashboard.
+# Frontend `?root=workspace|hermes`; defaults to workspace for back-compat
+# with older clients.
+_FILES_ROOTS: dict[str, Path] = {
+    "workspace": _FILES_ROOT,
+    "hermes": get_hermes_home().resolve(),
+}
+
+# Soft cap on inline text reads. Larger files surface a "too big — download
+# instead" hint to the client so we don't blow up the browser tab.
+_FILES_READ_INLINE_CAP = 5 * 1024 * 1024
+
+
+def _resolve_root(root_name: str) -> tuple[str, Path]:
+    """Return (canonical_root_name, root_path). Reject unknown names so a
+    typo never silently degrades the path guard."""
+    canonical = (root_name or "workspace").strip().lower()
+    if canonical not in _FILES_ROOTS:
+        raise HTTPException(status_code=400, detail=f"unknown root: {root_name!r}")
+    return canonical, _FILES_ROOTS[canonical]
+
+
+def _files_safe_path(rel: str, root_name: str = "workspace") -> Path:
+    """Resolve `rel` under the named root, rejecting traversal + out-of-root
+    symlinks. Caller passes ``root_name`` from the request's ``root`` query
+    param. .resolve() follows symlinks, so a link pointing outside the root
+    (e.g. into ~/.ssh) is rejected too."""
+    _, root = _resolve_root(root_name)
+    rel = (rel or "").lstrip("/").lstrip("\\")
+    if rel == "":
+        return root
+    candidate = (root / rel).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail=f"path outside {root_name} root")
+    return candidate
+
+
+@app.get("/api/files")
+async def files_list(path: str = "", root: str = "workspace"):
+    """List entries under `path` (relative to the named root)."""
+    canonical_root, root_path = _resolve_root(root)
+    target = _files_safe_path(path, canonical_root)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="path not found")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="path is not a directory")
+
+    entries = []
+    try:
+        children = sorted(
+            target.iterdir(),
+            key=lambda p: (not p.is_dir(), p.name.lower()),
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    for child in children:
+        try:
+            st = child.stat()
+            is_dir = child.is_dir()
+        except OSError:
+            continue
+        entries.append({
+            "name": child.name,
+            "path": str(child.relative_to(root_path)),
+            "is_dir": is_dir,
+            "size": st.st_size if not is_dir else None,
+            "mtime": st.st_mtime,
+        })
+
+    rel_path = "" if target == root_path else str(target.relative_to(root_path))
+    return {
+        "root": str(root_path),
+        "root_name": canonical_root,
+        "path": rel_path,
+        "entries": entries,
+    }
+
+
+@app.get("/api/files/read")
+async def files_read(path: str, root: str = "workspace"):
+    """Return text content of `path`, or a hint to download (binary / too big)."""
+    target = _files_safe_path(path, root)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+    size = target.stat().st_size
+    if size > _FILES_READ_INLINE_CAP:
+        return {"too_large": True, "size": size, "cap": _FILES_READ_INLINE_CAP}
+    try:
+        raw = target.read_bytes()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    if b"\x00" in raw:
+        return {"binary": True, "size": size}
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"binary": True, "size": size}
+    return {"binary": False, "size": size, "content": text}
+
+
+@app.get("/api/files/download")
+async def files_download(path: str, root: str = "workspace"):
+    """Stream a file at `path` back as an attachment."""
+    target = _files_safe_path(path, root)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+
+    def iter_file(p: Path, chunk: int = 64 * 1024):
+        with p.open("rb") as fh:
+            while True:
+                buf = fh.read(chunk)
+                if not buf:
+                    break
+                yield buf
+
+    encoded_name = urllib.parse.quote(target.name)
+    return StreamingResponse(
+        iter_file(target),
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
+            "Content-Length": str(target.stat().st_size),
+        },
+    )
+
+
+# Click-to-select inspector injected into previewed HTML when ``?_inspect=1``.
+# Runs in the sandboxed (opaque-origin) iframe; it stays dormant until the
+# dashboard host posts ``set-inspect``, then reports the clicked element back
+# via postMessage. postMessage works across the opaque origin, so no
+# same-origin grant is needed. See web/src/components/canvas/PreviewFrame.tsx.
+_CANVAS_INSPECTOR_JS = """
+(function(){
+  if (window.__sopifyInspector) return;
+  window.__sopifyInspector = true;
+  var enabled = false, last = null, OUTLINE = '2px solid #1D63ED';
+  function cssPath(el){
+    if (!(el instanceof Element)) return '';
+    var path = [];
+    while (el && el.nodeType === 1 && el !== document.body && path.length < 6){
+      var sel = el.nodeName.toLowerCase();
+      if (el.id){ path.unshift(sel + '#' + el.id); break; }
+      var cls = (el.className && typeof el.className === 'string')
+        ? el.className.trim().split(/\\s+/).slice(0,2).filter(Boolean).join('.') : '';
+      if (cls) sel += '.' + cls;
+      var parent = el.parentNode;
+      if (parent && parent.children){
+        var sibs = Array.prototype.filter.call(parent.children, function(c){ return c.nodeName === el.nodeName; });
+        if (sibs.length > 1) sel += ':nth-of-type(' + (sibs.indexOf(el)+1) + ')';
+      }
+      path.unshift(sel);
+      el = el.parentNode;
+    }
+    return path.join(' > ');
+  }
+  function clear(){ if (last){ last.style.outline = last.__sopifyO || ''; last = null; } }
+  function send(el){
+    var html = el.outerHTML || '';
+    if (html.length > 1500) html = html.slice(0,1500) + '\\u2026';
+    var text = (el.textContent || '').trim().replace(/\\s+/g,' ');
+    if (text.length > 200) text = text.slice(0,200) + '\\u2026';
+    window.parent.postMessage({ source:'sopify-canvas', type:'select', payload:{
+      selector: cssPath(el), tag: el.nodeName.toLowerCase(), id: el.id || '',
+      classes: (typeof el.className === 'string' ? el.className : ''),
+      text: text, html: html
+    }}, '*');
+  }
+  document.addEventListener('mouseover', function(e){
+    if (!enabled) return;
+    clear(); last = e.target; last.__sopifyO = last.style.outline; last.style.outline = OUTLINE;
+  }, true);
+  document.addEventListener('mouseout', function(){ if (enabled) clear(); }, true);
+  document.addEventListener('click', function(e){
+    if (!enabled) return;
+    e.preventDefault(); e.stopPropagation(); send(e.target);
+  }, true);
+  window.addEventListener('message', function(e){
+    var d = e.data || {};
+    if (d.source === 'sopify-canvas-host' && d.type === 'set-inspect'){
+      enabled = !!d.enabled;
+      document.documentElement.style.cursor = enabled ? 'crosshair' : '';
+      if (!enabled) clear();
+    }
+  });
+  window.parent.postMessage({ source:'sopify-canvas', type:'ready' }, '*');
+})();
+"""
+
+
+@app.get("/preview/{path:path}")
+async def files_preview(path: str, request: Request):
+    """Serve a workspace file inline for the Canvas iframe preview.
+
+    Lives OUTSIDE ``/api/`` on purpose: the auth middleware only gates
+    ``/api/`` paths, and HTML previewed in an iframe pulls in relative
+    subresources (CSS/JS/images) that the browser fetches *without* the
+    ``?_token=`` query param — those nested requests would be rejected by a
+    token check they can't satisfy. Instead we authenticate the top-level
+    navigation via ``?_token=`` (or the dashboard's session header) and set a
+    ``/preview``-scoped cookie so the nested loads carry auth automatically.
+
+    Only files under the workspace root are reachable (``_files_safe_path``
+    rejects traversal and out-of-root symlinks), and the host-header
+    middleware still restricts the bind to the loopback host by default.
+    """
+    token_ok = (
+        _has_valid_session_token(request)
+        or _has_valid_session_token_query(request)
+        or hmac.compare_digest(
+            request.cookies.get("hermes_preview", "").encode(),
+            _SESSION_TOKEN.encode(),
+        )
+    )
+    if not token_ok:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    target = _files_safe_path(path)
+    if target.is_dir():
+        index = target / "index.html"
+        if not index.is_file():
+            raise HTTPException(status_code=404, detail="no index.html in directory")
+        target = index
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+
+    media_type, _ = mimetypes.guess_type(str(target))
+    is_html = (media_type or "").startswith("text/html") or target.suffix.lower() in (
+        ".html",
+        ".htm",
+    )
+
+    if is_html and request.query_params.get("_inspect") == "1":
+        # Inject the click-to-select inspector just before </body> (falling
+        # back to appending) so the host can drive component selection.
+        try:
+            html = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            html = None
+        if html is not None:
+            tag = f"<script>{_CANVAS_INSPECTOR_JS}</script>"
+            lowered = html.lower()
+            idx = lowered.rfind("</body>")
+            html = html[:idx] + tag + html[idx:] if idx >= 0 else html + tag
+            response: Response = HTMLResponse(
+                html,
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+            )
+        else:
+            response = FileResponse(
+                target,
+                media_type=media_type or "application/octet-stream",
+                headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+            )
+    else:
+        response = FileResponse(
+            target,
+            media_type=media_type or "application/octet-stream",
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
+
+    # Propagate auth to nested subresource loads, which can't carry ?_token=.
+    if request.query_params.get("_token"):
+        response.set_cookie(
+            "hermes_preview",
+            _SESSION_TOKEN,
+            path="/preview",
+            httponly=True,
+            samesite="strict",
+        )
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Preview dev-server manager
+#
+# Lets the Panel start the project's dev server (e.g. `npm run dev`) so the
+# user doesn't have to open a terminal — the Canvas Live mode then points an
+# iframe at the printed localhost URL. One server at a time, host-only.
+#
+# This spawns an arbitrary command, so every endpoint requires the session
+# token and the cwd is constrained to the workspace root (same guard as the
+# file endpoints). The dashboard is loopback-bound by default; the trust
+# posture matches the existing gateway-restart / hermes-update spawns.
+# ---------------------------------------------------------------------------
+
+# Preview servers are tracked per chat session so switching sessions doesn't
+# kill an already-running dev server.  Each session has its own subprocess
+# and its own log file; the only cross-session interaction is port-collision
+# resolution (see `/status` below): when a newer session's server prints a
+# localhost URL on a port that an older session was also tracked on, the OS
+# only ever bound the most-recent process — the older entry is defunct and
+# gets stopped so the newer one keeps the port.
+_PREVIEW_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+# session_id is interpolated into a filename, so guard it strictly.
+_PREVIEW_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+# Common dev-server commands we accept. A free-form command is rejected to
+# avoid turning this into a generic RCE surface beyond starting dev servers.
+_PREVIEW_ALLOWED = {
+    "npm run dev",
+    "npm start",
+    "npm run start",
+    "yarn dev",
+    "yarn start",
+    "pnpm dev",
+    "pnpm start",
+    "bun dev",
+}
+
+# Default ports for common frontend dev servers (CRA 3000, Vite 5173/4173,
+# webpack/other 8080). `npm run dev` often boots an API server too, so prefer
+# a frontend URL over whichever process printed first.
+_PREVIEW_FRONTEND_PORTS = ("3000", "5173", "4173", "3001", "8080")
+
+
+def _preview_validate_session(session_id: Optional[str]) -> str:
+    if not isinstance(session_id, str) or not _PREVIEW_SESSION_ID_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="invalid or missing session_id")
+    return session_id
+
+
+def _preview_log_path(session_id: str) -> Path:
+    return _ACTION_LOG_DIR / f"preview-server-{session_id}.log"
+
+
+def _preview_running_for(session_id: str) -> bool:
+    info = _PREVIEW_SESSIONS.get(session_id)
+    return info is not None and info["proc"].poll() is None
+
+
+def _preview_detect_url_at(log_path: Path) -> Optional[str]:
+    """Find a dev server's localhost URL in its log, preferring frontend ports."""
+    if not log_path.exists():
+        return None
+    tail = _tail_lines(log_path, 400)
+    pattern = re.compile(r"https?://(?:localhost|127\.0\.0\.1):(\d+)")
+    found: list[tuple[str, str]] = []
+    for line in tail:
+        for m in pattern.finditer(line):
+            found.append((m.group(0), m.group(1)))
+    if not found:
+        return None
+    for url, port in found:
+        if port in _PREVIEW_FRONTEND_PORTS:
+            return url
+    return found[-1][0]
+
+
+def _port_from_url(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    m = re.search(r":(\d+)", url)
+    return m.group(1) if m else None
+
+
+def _preview_stop_session(session_id: str) -> bool:
+    """Terminate one session's dev-server process group. Returns True if a
+    running entry was found and signalled."""
+    info = _PREVIEW_SESSIONS.pop(session_id, None)
+    if info is None:
+        return False
+    proc = info["proc"]
+    if proc.poll() is not None:
+        return False
+    try:
+        if sys.platform == "win32":
+            proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if sys.platform != "win32":
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    return True
+
+
+def _preview_prune_dead() -> None:
+    """Drop registry entries whose process already exited."""
+    for sid in [s for s, info in _PREVIEW_SESSIONS.items() if info["proc"].poll() is not None]:
+        _PREVIEW_SESSIONS.pop(sid, None)
+
+
+@app.post("/api/preview-server/start")
+async def preview_server_start(request: Request):
+    """Start the project's dev server (default `npm run dev`) under `cwd` for
+    the given chat session.  Other sessions' servers are left running."""
+    _require_token(request)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    session_id = _preview_validate_session(body.get("session_id"))
+    command = str(body.get("command") or "npm run dev").strip()
+    cwd_rel = str(body.get("cwd") or "")
+
+    if command not in _PREVIEW_ALLOWED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"command not allowed; choose one of: {sorted(_PREVIEW_ALLOWED)}",
+        )
+
+    cwd = _files_safe_path(cwd_rel)
+    if not cwd.is_dir():
+        raise HTTPException(status_code=400, detail="cwd is not a directory")
+    if not (cwd / "package.json").is_file():
+        raise HTTPException(status_code=400, detail="no package.json in cwd")
+
+    # Replace any running server for THIS session — leave other sessions alone.
+    _preview_stop_session(session_id)
+    _preview_prune_dead()
+
+    _ACTION_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = _preview_log_path(session_id)
+    log_file = open(log_path, "wb", buffering=0)
+    log_file.write(
+        f"=== preview `{command}` in {cwd} for session {session_id} started "
+        f"{time.strftime('%Y-%m-%d %H:%M:%S')} ===\n".encode()
+    )
+
+    popen_kwargs: Dict[str, Any] = {
+        "cwd": str(cwd),
+        "stdin": subprocess.DEVNULL,
+        "stdout": log_file,
+        "stderr": subprocess.STDOUT,
+        # BROWSER=none stops CRA from opening a tab on the server host;
+        # CI=true keeps it non-interactive without failing on warnings.
+        "env": {**os.environ, "BROWSER": "none", "FORCE_COLOR": "0"},
+    }
+    if sys.platform == "win32":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+    else:
+        popen_kwargs["start_new_session"] = True
+
+    try:
+        proc = subprocess.Popen(shlex.split(command), **popen_kwargs)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=f"command not found: {exc}")
+    except Exception as exc:
+        _log.exception("Failed to start preview server")
+        raise HTTPException(status_code=500, detail=f"failed to start: {exc}")
+
+    _PREVIEW_SESSIONS[session_id] = {
+        "proc": proc,
+        "command": command,
+        "cwd": str(cwd.relative_to(_FILES_ROOT)) if cwd != _FILES_ROOT else "",
+        "started_at": time.time(),
+        "pid": proc.pid,
+        "log_path": log_path,
+    }
+    return {"ok": True, "pid": proc.pid, "command": command, "session_id": session_id}
+
+
+@app.get("/api/preview-server/status")
+async def preview_server_status(request: Request, session_id: str, lines: int = 200):
+    """Report the named session's dev server, plus URL and log tail.
+
+    Also resolves port collisions: if this session's detected port matches
+    another session's tracked port, the older entry is killed (newer wins).
+    """
+    _require_token(request)
+    _preview_validate_session(session_id)
+    _preview_prune_dead()
+
+    info = _PREVIEW_SESSIONS.get(session_id)
+    running = info is not None and info["proc"].poll() is None
+    log_path = _preview_log_path(session_id)
+    tail = _tail_lines(log_path, min(max(lines, 1), 2000)) if log_path.exists() else []
+    detected_url = _preview_detect_url_at(log_path) if running else None
+
+    # Collision resolution — newer (this) session wins the port.
+    this_port = _port_from_url(detected_url) if running else None
+    if this_port:
+        for other_sid in list(_PREVIEW_SESSIONS.keys()):
+            if other_sid == session_id:
+                continue
+            other = _PREVIEW_SESSIONS.get(other_sid)
+            if other is None or other["proc"].poll() is not None:
+                continue
+            other_port = _port_from_url(_preview_detect_url_at(other["log_path"]))
+            if other_port == this_port:
+                _preview_stop_session(other_sid)
+
+    return {
+        "running": running,
+        "pid": info["pid"] if running and info else None,
+        "command": info["command"] if info else None,
+        "cwd": info["cwd"] if info else None,
+        "url": detected_url,
+        "logs": tail,
+    }
+
+
+@app.post("/api/preview-server/stop")
+async def preview_server_stop_endpoint(request: Request):
+    """Stop one session's dev server."""
+    _require_token(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    session_id = _preview_validate_session(body.get("session_id"))
+    _preview_stop_session(session_id)
+    return {"ok": True}
+
+
+@app.post("/api/files/upload")
+async def files_upload(request: Request):
+    """Stream uploaded files into the directory named by the `path` form field.
+    `root` form field selects the root (defaults to workspace)."""
+    _require_token(request)
+    form = await request.form()
+    root_name = str(form.get("root", "workspace") or "workspace")
+    canonical_root, root_path = _resolve_root(root_name)
+    target_dir_rel = str(form.get("path", "") or "")
+    target_dir = _files_safe_path(target_dir_rel, canonical_root)
+    if not target_dir.exists():
+        raise HTTPException(status_code=404, detail="target directory not found")
+    if not target_dir.is_dir():
+        raise HTTPException(status_code=400, detail="target is not a directory")
+
+    saved = []
+    for key, value in form.multi_items():
+        if key in ("path", "root"):
+            continue
+        # UploadFile values carry .filename + .read(); skip plain text fields.
+        filename = getattr(value, "filename", None)
+        if not filename:
+            continue
+        # Strip directory components — only allow uploads directly into target_dir.
+        safe_name = Path(filename).name
+        if not safe_name or safe_name in (".", ".."):
+            continue
+        dest = target_dir / safe_name
+        # Defense-in-depth re-check against symlink shenanigans.
+        dest_check = (target_dir.resolve() / safe_name)
+        try:
+            dest_check.relative_to(root_path)
+        except ValueError:
+            raise HTTPException(status_code=403, detail=f"upload target outside {canonical_root}")
+        try:
+            with dest.open("wb") as fh:
+                while True:
+                    chunk = await value.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+        finally:
+            await value.close()
+        saved.append({
+            "name": safe_name,
+            "path": str(dest.relative_to(root_path)),
+            "size": dest.stat().st_size,
+        })
+
+    if not saved:
+        raise HTTPException(status_code=400, detail="no files in upload")
+    _log.info("files upload: root=%s dir=%s count=%d", canonical_root, target_dir_rel, len(saved))
+    return {"ok": True, "root_name": canonical_root, "saved": saved}
+
+
+class FileRenameBody(BaseModel):
+    src: str
+    dst: str
+    root: str = "workspace"
+
+
+@app.post("/api/files/rename")
+async def files_rename(body: FileRenameBody, request: Request):
+    """Move/rename a file or directory within the named root."""
+    _require_token(request)
+    canonical_root, root_path = _resolve_root(body.root)
+    src = _files_safe_path(body.src, canonical_root)
+    if src == root_path:
+        raise HTTPException(status_code=400, detail="cannot rename root")
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="source not found")
+    # For dst, we want to allow the parent to exist but the dst itself to be new.
+    dst_rel = (body.dst or "").lstrip("/").lstrip("\\")
+    if not dst_rel:
+        raise HTTPException(status_code=400, detail="dst is empty")
+    dst = (root_path / dst_rel).resolve()
+    try:
+        dst.relative_to(root_path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail=f"dst outside {canonical_root}")
+    if dst.exists():
+        raise HTTPException(status_code=409, detail="destination already exists")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src.rename(dst)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    _log.info("files rename: root=%s %s -> %s", canonical_root, body.src, body.dst)
+    return {"ok": True}
+
+
+class FileMkdirBody(BaseModel):
+    path: str
+    root: str = "workspace"
+
+
+@app.post("/api/files/mkdir")
+async def files_mkdir(body: FileMkdirBody, request: Request):
+    """Create a (possibly nested) directory within the named root."""
+    _require_token(request)
+    canonical_root, root_path = _resolve_root(body.root)
+    rel = (body.path or "").lstrip("/").lstrip("\\")
+    if not rel:
+        raise HTTPException(status_code=400, detail="path is empty")
+    target = (root_path / rel).resolve()
+    try:
+        target.relative_to(root_path)
+    except ValueError:
+        raise HTTPException(status_code=403, detail=f"path outside {canonical_root}")
+    if target == root_path:
+        raise HTTPException(status_code=400, detail="cannot mkdir on root")
+    if target.exists():
+        raise HTTPException(status_code=409, detail="path already exists")
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    _log.info("files mkdir: root=%s %s", canonical_root, body.path)
+    return {"ok": True, "path": str(target.relative_to(root_path))}
+
+
+@app.delete("/api/files")
+async def files_delete(path: str, request: Request, root: str = "workspace"):
+    """Delete a file or (recursively) a directory within the named root."""
+    _require_token(request)
+    canonical_root, root_path = _resolve_root(root)
+    target = _files_safe_path(path, canonical_root)
+    if target == root_path:
+        raise HTTPException(status_code=400, detail="cannot delete root")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="path not found")
+    try:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    _log.info("files delete: %s", path)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Vibe Code — AI-DLC project scaffolding flow (see SPECIFICATION_ADD_ON_FLOW.md).
+#
+# The frontend at /vibe-code lets a user pick an example mode (dashboard,
+# form-registration, landing-page, web-app) and a set of add-ons, then names
+# the project. On submit we create a folder under <hermes_home>/vibe-projects/
+# and write a project.json marker that downstream phases (brainstorm →
+# requirements → planning → dev) will read/append to.
+# ---------------------------------------------------------------------------
+
+
+_VIBE_EXAMPLES_DIR: Path = PROJECT_ROOT / "example"
+_VIBE_PROJECTS_ROOT: Path = get_hermes_home() / "vibe-projects"
+_VIBE_PROMPTS_DIR: Path = PROJECT_ROOT / "prompts" / "vibe"
+
+# Display labels for the four built-in example modes. Folder name → user-
+# facing label (English; UI can localize separately).
+_VIBE_EXAMPLE_LABELS: dict[str, str] = {
+    "dashboard": "Dashboard",
+    "form-registration": "Form / Registration",
+    "landing-page": "Landing Page",
+    "web-app": "Web App",
+}
+
+# Available add-on keys. Selected ones are stored on the project; later
+# phases (brainstorm / dev) splice the matching prompt-template snippet
+# into the agent's system prompt.
+_VIBE_ADDON_KEYS: set[str] = {
+    "auth-jwt",
+    "database-supabase",
+    "file-upload",
+    "schedule-job",
+    "qr-scan",
+    "dark-mode",
+}
+
+# Slug rule for project names: lowercase letters/digits + dash/underscore,
+# 1-64 chars, must start with a letter or digit. Matches the existing
+# `profiles` naming convention.
+_VIBE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+class VibeProjectCreate(BaseModel):
+    name: str
+    mode: str
+    add_ons: List[str] = []
+
+
+@app.get("/api/vibe/examples")
+async def vibe_list_examples(request: Request):
+    """List built-in example modes with display labels and image URLs."""
+    _require_token(request)
+    out = []
+    for slug, label in _VIBE_EXAMPLE_LABELS.items():
+        d = _VIBE_EXAMPLES_DIR / slug
+        if not d.is_dir():
+            continue
+        has_image = (d / "image.png").is_file()
+        out.append({
+            "name": slug,
+            "label": label,
+            "has_image": has_image,
+            "image_url": f"/api/vibe/examples/{slug}/image.png" if has_image else None,
+        })
+    return {"examples": out}
+
+
+@app.get("/api/vibe/examples/{name}/image.png")
+async def vibe_example_image(name: str):
+    """Serve image.png from sopify-harness/example/<name>/image.png.
+
+    The handler itself doesn't call `_require_token` — the global
+    auth_middleware already gates this under /api/, and accepts a
+    `?_token=<token>` query string for <img src=...> requests that
+    can't carry the X-Hermes-Session-Token header.
+    """
+    if name not in _VIBE_EXAMPLE_LABELS:
+        raise HTTPException(status_code=404, detail="unknown example")
+    img = _VIBE_EXAMPLES_DIR / name / "image.png"
+    if not img.is_file():
+        raise HTTPException(status_code=404, detail="image missing")
+    return FileResponse(img, media_type="image/png")
+
+
+@app.get("/preview/vibe/{name}")
+@app.get("/preview/vibe/{name}/")
+@app.get("/preview/vibe/{name}/{path:path}")
+async def vibe_preview(name: str, request: Request, path: str = ""):
+    """Serve a file from a vibe project for the Building-phase iframe.
+
+    Lives under ``/preview/`` so the existing ``hermes_preview`` cookie auth
+    (set by the canvas preview flow at ``/preview/{path}``) covers nested
+    subresource loads — themes ship ``app/`` and ``assets/`` folders that
+    relative-link from the entry HTML and can't carry a ``?_token=`` of
+    their own. Top-level navigations still authenticate via header /
+    query string before the cookie is set.
+
+    When ``path`` is empty or names a directory we resolve a sensible
+    entry file: ``index.html`` if present, otherwise the first ``.html``
+    found in that directory (themes ship a single named entry like
+    ``Production Overview.html``).
+    """
+    token_ok = (
+        _has_valid_session_token(request)
+        or _has_valid_session_token_query(request)
+        or hmac.compare_digest(
+            request.cookies.get("hermes_preview", "").encode(),
+            _SESSION_TOKEN.encode(),
+        )
+    )
+    if not token_ok:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    project_dir = _vibe_project_dir(name)
+    rel = (path or "").lstrip("/").lstrip("\\")
+    candidate = (project_dir / rel).resolve() if rel else project_dir
+    try:
+        candidate.relative_to(project_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="path outside project")
+
+    if not candidate.exists():
+        raise HTTPException(status_code=404, detail="file not found")
+
+    if candidate.is_dir():
+        entry = candidate / "index.html"
+        if not entry.is_file():
+            html_files = sorted(p for p in candidate.iterdir() if p.is_file() and p.suffix.lower() == ".html")
+            if not html_files:
+                raise HTTPException(status_code=404, detail="no html entry in directory")
+            entry = html_files[0]
+        candidate = entry
+
+    media_type, _ = mimetypes.guess_type(str(candidate))
+    response: Response = FileResponse(
+        candidate,
+        media_type=media_type or "application/octet-stream",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+    if request.query_params.get("_token"):
+        response.set_cookie(
+            "hermes_preview",
+            _SESSION_TOKEN,
+            path="/preview",
+            httponly=True,
+            samesite="strict",
+        )
+    return response
+
+
+@app.post("/api/vibe/projects")
+async def vibe_create_project(body: VibeProjectCreate, request: Request):
+    """Create a new Vibe Code project folder + project.json marker.
+
+    Refuses to clobber an existing folder (409) so a user retrying with the
+    same name gets a clear failure rather than silently merging.
+    """
+    from datetime import datetime, timezone
+
+    _require_token(request)
+    name = (body.name or "").strip().lower()
+    if not _VIBE_NAME_RE.match(name):
+        raise HTTPException(
+            status_code=400,
+            detail="invalid name: use lowercase letters, digits, _ or - (1-64 chars, start with letter/digit)",
+        )
+    if body.mode not in _VIBE_EXAMPLE_LABELS:
+        raise HTTPException(status_code=400, detail=f"unknown mode: {body.mode}")
+    unknown_addons = [a for a in body.add_ons if a not in _VIBE_ADDON_KEYS]
+    if unknown_addons:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown add-ons: {', '.join(unknown_addons)}",
+        )
+
+    _VIBE_PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    project_dir = _VIBE_PROJECTS_ROOT / name
+    if project_dir.exists():
+        raise HTTPException(status_code=409, detail="project already exists")
+
+    try:
+        project_dir.mkdir(parents=False, exist_ok=False)
+        # Seed the project with the chosen theme's starter files so the agent
+        # has something to work from on the very first turn. image.png is the
+        # picker thumbnail — skip it.
+        example_src = _VIBE_EXAMPLES_DIR / body.mode
+        if example_src.is_dir():
+            for entry in example_src.iterdir():
+                if entry.name == "image.png":
+                    continue
+                dest = project_dir / entry.name
+                if entry.is_dir():
+                    shutil.copytree(entry, dest)
+                else:
+                    shutil.copy2(entry, dest)
+        marker = {
+            "name": name,
+            "mode": body.mode,
+            "add_ons": sorted(set(body.add_ons)),
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "phase": "brainstorm",
+        }
+        (project_dir / "project.json").write_text(
+            json.dumps(marker, indent=2) + "\n", encoding="utf-8",
+        )
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    _log.info("vibe project created: %s (mode=%s, add_ons=%s)", name, body.mode, marker["add_ons"])
+    return {"ok": True, "name": name, "path": str(project_dir), "project": marker}
+
+
+# Ordered phase machine. The frontend stepper renders these in this order
+# and downstream phase-advance endpoints can validate transitions against it.
+_VIBE_PHASES: list[str] = [
+    "brainstorm",
+    "requirements",
+    "planning",
+    "development",
+    "improvement",
+    "security",
+    "approve",
+]
+
+
+def _vibe_project_dir(name: str) -> Path:
+    """Resolve a project dir, rejecting traversal / unknown names."""
+    if not _VIBE_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="invalid name")
+    d = (_VIBE_PROJECTS_ROOT / name).resolve()
+    try:
+        d.relative_to(_VIBE_PROJECTS_ROOT.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="path outside vibe-projects root")
+    if not d.is_dir():
+        raise HTTPException(status_code=404, detail="project not found")
+    return d
+
+
+def _vibe_read_marker(project_dir: Path) -> dict:
+    f = project_dir / "project.json"
+    if not f.is_file():
+        raise HTTPException(status_code=500, detail="project.json missing")
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"bad project.json: {exc}")
+
+
+def _vibe_write_marker(project_dir: Path, marker: dict) -> None:
+    from datetime import datetime, timezone
+    marker["updated_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (project_dir / "project.json").write_text(
+        json.dumps(marker, indent=2) + "\n", encoding="utf-8",
+    )
+
+
+@app.get("/api/vibe/projects")
+async def vibe_list_projects(request: Request):
+    """List all vibe projects on disk (newest first)."""
+    _require_token(request)
+    _VIBE_PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    out = []
+    for child in _VIBE_PROJECTS_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        marker_file = child / "project.json"
+        if not marker_file.is_file():
+            continue
+        try:
+            data = json.loads(marker_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        out.append({
+            "name": data.get("name", child.name),
+            "mode": data.get("mode", "unknown"),
+            "add_ons": data.get("add_ons", []),
+            "phase": data.get("phase", "brainstorm"),
+            "created_at": data.get("created_at"),
+            "updated_at": data.get("updated_at"),
+        })
+    # Newest first by created_at fallback name.
+    out.sort(key=lambda p: (p.get("created_at") or "", p["name"]), reverse=True)
+    return {"projects": out}
+
+
+def _read_if_exists(path: Path) -> Optional[str]:
+    return path.read_text(encoding="utf-8") if path.is_file() else None
+
+
+@app.get("/api/vibe/projects/{name}")
+async def vibe_get_project(name: str, request: Request):
+    """Return project marker + content of artifact files if present."""
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    return {
+        "project": marker,
+        "path": str(d),
+        "requirements_md": _read_if_exists(d / "REQUIREMENTS.md"),
+        "planning_md": _read_if_exists(d / "PLANNING.md"),
+        "security_review_md": _read_if_exists(d / "SECURITY_REVIEW.md"),
+    }
+
+
+def _vibe_compose_system_prompt(marker: dict) -> str:
+    """Concatenate base + mode + selected add-ons from prompts/vibe/ into a
+    single system prompt string. Missing files are silently skipped so a
+    minimal install still works."""
+    parts: list[str] = []
+    project_name = marker.get("name", "")
+    mode = marker.get("mode", "")
+    add_ons = marker.get("add_ons", []) or []
+
+    if project_name:
+        project_dir = _VIBE_PROJECTS_ROOT / project_name
+        parts.append(
+            f"# Project: {project_name}\n\n"
+            f"**Project folder:** `{project_dir}`\n\n"
+            f"All files for this project — including `REQUIREMENTS.md`, "
+            f"`PLANNING.md`, source code, etc. — live under that absolute "
+            f"path. Use it directly when reading or writing project files; "
+            f"do not assume the current working directory.\n"
+        )
+
+    base = _VIBE_PROMPTS_DIR / "base.md"
+    if base.is_file():
+        parts.append(base.read_text(encoding="utf-8").rstrip())
+
+    mode_file = _VIBE_PROMPTS_DIR / "modes" / f"{mode}.md"
+    if mode_file.is_file():
+        parts.append(mode_file.read_text(encoding="utf-8").rstrip())
+
+    for addon in add_ons:
+        f = _VIBE_PROMPTS_DIR / "add-ons" / f"{addon}.md"
+        if f.is_file():
+            parts.append(f.read_text(encoding="utf-8").rstrip())
+
+    return "\n\n".join(parts).strip() + "\n"
+
+
+@app.get("/api/vibe/projects/{name}/system-prompt")
+async def vibe_get_system_prompt(name: str, request: Request):
+    """Return the composed system prompt the frontend can send as the
+    kickoff message in the brainstorm chat. Kept as a separate endpoint
+    so prompt edits don't require a project re-create."""
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    return {"prompt": _vibe_compose_system_prompt(marker)}
+
+
+class VibeProjectPatch(BaseModel):
+    summary: Optional[str] = None
+    session_id: Optional[str] = None
+    phase: Optional[str] = None
+
+
+@app.patch("/api/vibe/projects/{name}")
+async def vibe_update_project(name: str, body: VibeProjectPatch, request: Request):
+    """Update mutable fields on project.json: running summary, chat session id, phase."""
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    if body.summary is not None:
+        marker["summary"] = body.summary
+    if body.session_id is not None:
+        marker["session_id"] = body.session_id
+    if body.phase is not None:
+        if body.phase not in _VIBE_PHASES:
+            raise HTTPException(status_code=400, detail=f"unknown phase: {body.phase}")
+        marker["phase"] = body.phase
+    _vibe_write_marker(d, marker)
+    return {"ok": True, "project": marker}
+
+
+class VibeRequirementsAccept(BaseModel):
+    content: str
+
+
+@app.post("/api/vibe/projects/{name}/requirements")
+async def vibe_write_requirements(
+    name: str, body: VibeRequirementsAccept, request: Request,
+):
+    """Write REQUIREMENTS.md and advance phase to 'requirements'.
+
+    The frontend sends the agreed-on summary text; this just persists it.
+    Subsequent phases read this file as the source of truth.
+    """
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="requirements content is empty")
+    (d / "REQUIREMENTS.md").write_text(content + "\n", encoding="utf-8")
+    marker = _vibe_read_marker(d)
+    marker["phase"] = "requirements"
+    _vibe_write_marker(d, marker)
+    _log.info("vibe project %s: REQUIREMENTS.md written, phase -> requirements", name)
+    return {"ok": True, "project": marker}
+
+
+class VibePlanningAccept(BaseModel):
+    content: str
+
+
+@app.post("/api/vibe/projects/{name}/planning")
+async def vibe_write_planning(
+    name: str, body: VibePlanningAccept, request: Request,
+):
+    """Write PLANNING.md and advance phase to 'development'."""
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="planning content is empty")
+    (d / "PLANNING.md").write_text(content + "\n", encoding="utf-8")
+    marker = _vibe_read_marker(d)
+    marker["phase"] = "development"
+    _vibe_write_marker(d, marker)
+    _log.info("vibe project %s: PLANNING.md written, phase -> development", name)
+    return {"ok": True, "project": marker}
+
+
+@app.post("/api/vibe/projects/{name}/security-review")
+async def vibe_security_review(name: str, request: Request):
+    """Run the security review and persist the result to SECURITY_REVIEW.md.
+
+    Stubbed for now: writes a placeholder report. A future iteration will
+    invoke the `security-review` skill against the project directory and
+    capture its output here. The phase stays at 'security' so the user
+    can read the report before accepting the IT approve step.
+    """
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    report = (
+        "# Security Review\n\n"
+        "_Automated security review for this Vibe Code project._\n\n"
+        f"- Project: **{marker.get('name')}**\n"
+        f"- Mode: **{marker.get('mode')}**\n"
+        f"- Add-ons: {', '.join(marker.get('add_ons') or []) or '—'}\n\n"
+        "## Findings\n\n"
+        "_(No automated findings yet — this is the stub report. The real\n"
+        "security-review skill will replace this output in a follow-up.)_\n\n"
+        "## Next steps\n\n"
+        "Review the project files manually for:\n"
+        "- Hardcoded secrets / API keys\n"
+        "- Unvalidated input on form/upload endpoints\n"
+        "- Missing auth checks on protected routes\n"
+        "- CORS / cookie / CSRF posture\n"
+    )
+    (d / "SECURITY_REVIEW.md").write_text(report, encoding="utf-8")
+    # Phase stays at "security" until the user accepts and advances.
+    if marker.get("phase") != "security":
+        marker["phase"] = "security"
+        _vibe_write_marker(d, marker)
+    _log.info("vibe project %s: SECURITY_REVIEW.md written (stub)", name)
+    return {"ok": True, "project": marker, "report": report}
+
+
+@app.delete("/api/vibe/projects/{name}")
+async def vibe_delete_project(name: str, request: Request):
+    """Remove a vibe project directory."""
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    try:
+        shutil.rmtree(d)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    _log.info("vibe project deleted: %s", name)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Dev-server lifecycle — per-chat-session port owner tracking.
+#
+# Vibe Code's Building view and /panel's canvas iframe both want to show
+# the agent's running dev server (Vite / Next / etc.). Multiple sessions
+# can't share port 5173, so we treat the dev server as a per-session
+# resource: switching the active session pauses one and revives the other.
+#
+# State + lifecycle live in hermes_cli/dev_server_manager.py. Detection
+# happens in tui_gateway/server.py when a tool's stdout prints a localhost
+# URL.
+# ---------------------------------------------------------------------------
+
+
+class _SetActiveSessionBody(BaseModel):
+    session_key: str
+
+
+@app.get("/api/dev-server")
+async def dev_server_list(request: Request, session_key: str = ""):
+    """List known dev servers for a session (or all running servers when
+    no session_key passed)."""
+    _require_token(request)
+    from hermes_cli import dev_server_manager as _dsm
+
+    if session_key:
+        return {
+            "session_key": session_key,
+            "active_session_key": _dsm.get_active_session_key(),
+            "servers": _dsm.list_for_session(session_key),
+        }
+    return {
+        "active_session_key": _dsm.get_active_session_key(),
+        "servers": _dsm.list_all_active_running(),
+    }
+
+
+@app.post("/api/sessions/set-active")
+async def sessions_set_active(body: _SetActiveSessionBody, request: Request):
+    """Mark `session_key` as the active session: pause every running dev
+    server tied to a different session, revive paused servers in this one.
+    Returns a summary of what changed."""
+    _require_token(request)
+    from hermes_cli import dev_server_manager as _dsm
+
+    return _dsm.set_active_session(body.session_key)
+
+
+class _StopServerBody(BaseModel):
+    session_key: str
+    port: int
+
+
+@app.post("/api/dev-server/stop")
+async def dev_server_stop(body: _StopServerBody, request: Request):
+    """Manual kill button — pause one specific server without changing
+    active session."""
+    _require_token(request)
+    from hermes_cli import dev_server_manager as _dsm
+
+    ok = _dsm.stop_server(body.session_key, body.port)
+    return {"ok": ok}
 
 
 # ---------------------------------------------------------------------------

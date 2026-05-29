@@ -5,13 +5,16 @@ import { cn } from "@/lib/utils";
 import { useI18n } from "@/i18n";
 
 /** Gateway + session summary for the System sidebar block (no separate strip chrome). */
-export function SidebarStatusStrip() {
+export function SidebarStatusStrip({ collapsed = false }: SidebarStatusStripProps) {
   const status = useSidebarStatus();
   const { t } = useI18n();
 
   if (status === null) {
     return (
-      <div className="px-5 py-1.5" aria-hidden>
+      <div
+        className={cn("px-5 py-1.5", collapsed && "lg:hidden")}
+        aria-hidden
+      >
         <div className="h-2 w-[80%] max-w-full animate-pulse rounded-sm bg-midground/10" />
       </div>
     );
@@ -31,6 +34,7 @@ export function SidebarStatusStrip() {
         "transition-colors hover:text-muted-foreground/90",
         "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40",
         "focus-visible:ring-inset",
+        collapsed && "lg:hidden",
       )}
     >
       <div className="flex flex-col gap-1 font-mondwest text-[0.55rem] leading-snug tracking-[0.12em]">
@@ -48,6 +52,10 @@ export function SidebarStatusStrip() {
       </div>
     </Link>
   );
+}
+
+interface SidebarStatusStripProps {
+  collapsed?: boolean;
 }
 
 function gatewayLine(

@@ -23,6 +23,7 @@ import {
   Hash,
   X,
   Play,
+  Sparkles,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
@@ -353,6 +354,19 @@ function SessionRow({
             <Badge tone="outline" className="text-[10px]">
               {session.source ?? "local"}
             </Badge>
+            <Button
+              ghost
+              size="icon"
+              className="text-muted-foreground hover:text-primary"
+              aria-label="Resume in Panel"
+              title="Resume in Panel"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/panel?resume=${encodeURIComponent(session.id)}`);
+              }}
+            >
+              <Sparkles />
+            </Button>
             {resumeInChatEnabled && (
               <Button
                 ghost

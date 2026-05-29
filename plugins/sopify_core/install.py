@@ -75,8 +75,7 @@ def _ensure_image(report: InstallReport) -> None:
             f"building {SANDBOX_IMAGE} (Linux Python deps, ~2-5 min first time)..."
         )
         build = subprocess.run(
-            ["docker", "build", "-t", SANDBOX_IMAGE,
-             "-f", dockerfile, repo_root, "--quiet"],
+            ["docker", "build", "-t", SANDBOX_IMAGE, "-f", dockerfile, repo_root, "--quiet"],
             capture_output=True, text=True,
         )
         if build.returncode != 0:
@@ -150,18 +149,29 @@ def _ensure_network(report: InstallReport) -> None:
 
 
 def _write_default_policy(report: InstallReport) -> None:
+
+    # Checking Directory
     paths.ensure_directories()
+
+    # Checking Network
     f = paths.network_policy_file()
     if f.exists():
         report.steps.append("network-policy.json: keep existing")
         return
+    
+    # Create Whitelist
     policy = {
         "whitelist": DEFAULT_WHITELIST,
         "user_added": [],
         "version": 1,
     }
+
     f.write_text(json.dumps(policy, indent=2))
+    
+    # Set permission 
     f.chmod(0o644)
+
+    # Overwrite the report
     report.steps.append("network-policy.json: wrote defaults")
 
 
@@ -183,15 +193,27 @@ def _emit_install_event(report: InstallReport) -> None:
 
 
 def run() -> InstallReport:
+
+    # Define Install Report Structure
     report = InstallReport()
     if not _require_docker(report):
         return report
+
+    # Checking Directories
     paths.ensure_directories()
+
+    # Check Docker Image 
     _ensure_image(report)
     if report.errors:
         return report
+
+    # Checking Docker Network allowed list
     _ensure_network(report)
+
+    # Write the Network Policy File 
     _write_default_policy(report)
+
+    
     # ENCM Control Plane scaffold (REQ-ENCM-M1 pivot — see
     # SOPIFY_ENCM_SBX_INTEGRATION_PLAN.md). The MITM-proxy variant that
     # used to fire here is archived under

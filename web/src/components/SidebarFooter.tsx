@@ -2,7 +2,7 @@ import { Typography } from "@/components/NouiTypography";
 import { useSidebarStatus } from "@/hooks/useSidebarStatus";
 import { cn } from "@/lib/utils";
 
-export function SidebarFooter() {
+export function SidebarFooter({ collapsed = false }: SidebarFooterProps) {
   const status = useSidebarStatus();
 
   return (
@@ -11,10 +11,12 @@ export function SidebarFooter() {
         "flex shrink-0 items-center justify-between gap-2",
         "px-5 py-2.5",
         "border-t border-current/10",
+        collapsed && "lg:justify-center lg:px-2",
       )}
     >
       <Typography
         mondwest
+        title={status?.version != null ? `v${status.version}` : undefined}
         className="font-mono-ui text-[0.7rem] tabular-nums tracking-[0.1em] text-muted-foreground/70 lowercase"
       >
         {status?.version != null ? `v${status.version}` : "—"}
@@ -28,6 +30,7 @@ export function SidebarFooter() {
           "font-mondwest text-[0.65rem] tracking-[0.15em] text-midground",
           "transition-opacity hover:opacity-90",
           "focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground/40",
+          collapsed && "lg:hidden",
         )}
         style={{ mixBlendMode: "plus-lighter" }}
       >
@@ -35,4 +38,8 @@ export function SidebarFooter() {
       </a>
     </div>
   );
+}
+
+interface SidebarFooterProps {
+  collapsed?: boolean;
 }

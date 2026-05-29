@@ -285,8 +285,18 @@ def _cmd_dashboard(argv: list[str]) -> int:
         if "--no-open" not in hermes_args:
             # No browser inside the microVM — the host launcher opens it.
             hermes_args.append("--no-open")
-    # Publish 9119 from microVM to host so the browser can reach it.
-    return _delegate_to_hermes(hermes_args, publish_ports=[9119])
+    # Publish 9119 (dashboard) + common dev-server ports so the Vibe Code
+    # "Live preview" iframe can reach whatever the agent spins up without
+    # asking the user to manually expose ports:
+    #   5173/4173  Vite (dev / preview)
+    #   3000       Next.js / CRA / Express
+    #   4321       Astro
+    #   8000/8080  Generic Python/Java dev servers
+    # All bind to 127.0.0.1 on the host so nothing leaks to the LAN.
+    return _delegate_to_hermes(
+        hermes_args,
+        publish_ports=[9119, 5173, 4173, 3000, 4321, 8000, 8080],
+    )
 
 
 def _cmd_chat(argv: list[str]) -> int:

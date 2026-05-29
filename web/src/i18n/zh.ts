@@ -52,6 +52,9 @@ export const zh: Translations = {
     brand: "Hermes Agent",
     brandShort: "HA",
     closeNavigation: "关闭导航",
+    collapseNavigation: "收起侧边栏",
+    configureNavSection: "配置",
+    expandNavigation: "展开侧边栏",
     closeModelTools: "关闭模型与工具",
     footer: {
       org: "GS Battery",
@@ -67,7 +70,7 @@ export const zh: Translations = {
     },
     nav: {
       analytics: "分析",
-      chat: "对话",
+      chat: "Terminal",
       config: "配置",
       cron: "定时任务",
       documentation: "文档",

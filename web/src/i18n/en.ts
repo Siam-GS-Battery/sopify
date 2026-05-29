@@ -53,6 +53,9 @@ export const en: Translations = {
     brand: "Hermes Agent",
     brandShort: "HA",
     closeNavigation: "Close navigation",
+    collapseNavigation: "Collapse sidebar",
+    configureNavSection: "Configure",
+    expandNavigation: "Expand sidebar",
     closeModelTools: "Close model and tools",
     footer: {
       org: "GS Battery",
@@ -68,7 +71,7 @@ export const en: Translations = {
     },
     nav: {
       analytics: "Analytics",
-      chat: "Chat",
+      chat: "Terminal",
       config: "Config",
       cron: "Cron",
       documentation: "Documentation",

@@ -15,6 +15,7 @@ First matching rule wins. ``default_action="deny"`` means no match → deny.
 """
 from __future__ import annotations
 
+# Unix File name matching checker
 import fnmatch
 import re
 from dataclasses import dataclass
@@ -69,8 +70,10 @@ def _domain_matches(rule_domain: str, host: str) -> bool:
 
 
 def _path_matches_any(patterns: list[str], path: str) -> bool:
-    """True iff `path` matches at least one glob pattern. Empty list → False
-    (no patterns can match nothing). Caller decides what empty means."""
+    """
+    True iff `path` matches at least one glob pattern. Empty list → False
+    (no patterns can match nothing). Caller decides what empty means.
+    """
     for pat in patterns:
         if fnmatch.fnmatchcase(path, pat):
             return True
@@ -78,56 +81,83 @@ def _path_matches_any(patterns: list[str], path: str) -> bool:
 
 
 def _path_is_allowed(allow_patterns: list[str], path: str) -> bool:
-    """Allow-list semantics: empty list = allow anything; non-empty = path
-    must match at least one pattern."""
+    """
+    Allow-list semantics: empty list = allow anything; non-empty = path
+    must match at least one pattern.
+    """
     if not allow_patterns:
         return True
     return _path_matches_any(allow_patterns, path)
 
 
 def _path_is_denied(deny_patterns: list[str], path: str) -> bool:
-    """Deny-list semantics: empty list = deny nothing; non-empty = path is
-    denied iff it matches at least one pattern."""
+    """
+    Deny-list semantics: empty list = deny nothing; non-empty = path is
+    denied iff it matches at least one pattern.
+    """
     if not deny_patterns:
         return False
     return _path_matches_any(deny_patterns, path)
 
 
 def _mqtt_topic_matches(pattern: str, topic: str) -> bool:
-    """MQTT topic-filter matching. `+` = single level, `#` = multi-level (terminal)."""
+    """
+    MQTT topic-filter matching. `+` = single level, `#` = multi-level (terminal).
+    """
     if pattern == "#":
         return True
+
     # Convert MQTT wildcards to regex
     parts = pattern.split("/")
     topic_parts = topic.split("/")
     for i, p in enumerate(parts):
+
         if p == "#":
             return True  # remaining levels swallowed
+
         if i >= len(topic_parts):
             return False
+        
         if p == "+":
             continue  # any single level
+        
         if p != topic_parts[i]:
             return False
+    
     # All pattern parts consumed — accept iff topic is fully consumed too.
     return len(topic_parts) == len(parts)
 
 
+
+
+
+
+
+
+
+
 class RuleMatcher:
-    """Stateless rule lookup + rate-limit gate over a NetworkPolicy snapshot."""
+    """
+    Stateless rule lookup + rate-limit gate over a NetworkPolicy snapshot.
+    """
 
     def __init__(self, policy: NetworkPolicy, rate_limiter: RateLimiter | None = None) -> None:
         self._policy = policy
         self._rl = rate_limiter or RateLimiter()
 
+
     @property
     def policy(self) -> NetworkPolicy:
         return self._policy
 
+
     def update_policy(self, policy: NetworkPolicy) -> None:
-        """Hot-reload — swap the policy snapshot. Existing rate-limit buckets keep
-        accruing (intentional: rule reload doesn't reset quotas)."""
+        """
+        Hot-reload — swap the policy snapshot. Existing rate-limit buckets keep
+        accruing (intentional: rule reload doesn't reset quotas).
+        """
         self._policy = policy
+
 
     def evaluate_http(
         self,
@@ -139,7 +169,9 @@ class RuleMatcher:
         path: str,
         src: str,
     ) -> Decision:
-        """Evaluate an HTTP/HTTPS request."""
+        """
+        Evaluate an HTTP/HTTPS request.
+        """
         for rule in self._policy.rules:
             if not isinstance(rule, HttpRule):
                 continue
@@ -169,6 +201,9 @@ class RuleMatcher:
             protocol=protocol, dst_host=host, dst_port=port,
         )
 
+
+
+
     def evaluate_websocket(
         self, *, protocol: Literal["ws", "wss"], host: str, port: int, src: str
     ) -> Decision:
@@ -191,6 +226,8 @@ class RuleMatcher:
             reason="no matching rule (default-deny)",
             protocol=protocol, dst_host=host, dst_port=port,
         )
+
+
 
     def evaluate_mqtt_connect(
         self, *, protocol: Literal["mqtt", "mqtts"], host: str, port: int, src: str
@@ -218,6 +255,9 @@ class RuleMatcher:
             None,
         )
 
+
+
+
     @staticmethod
     def evaluate_mqtt_topic(rule: MqttRule, topic: str, action: Literal["pub", "sub"]) -> Decision:
         """Per-frame topic ACL. Caller must already have established the broker
@@ -243,6 +283,10 @@ class RuleMatcher:
             reason=f"rule {rule.id}: topic {topic!r} not in topics_allow",
             rule_id=rule.id,
         )
+
+
+
+
 
     def evaluate_tcp(
         self, *, host: str, port: int, src: str

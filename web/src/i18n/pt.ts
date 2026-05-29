@@ -68,7 +68,7 @@ export const pt: Translations = {
     },
     nav: {
       analytics: "Análise",
-      chat: "Chat",
+      chat: "Terminal",
       config: "Configuração",
       cron: "Cron",
       documentation: "Documentação",

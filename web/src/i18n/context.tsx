@@ -1,39 +1,11 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
 import type { Locale, Translations } from "./types";
 import { en } from "./en";
-import { zh } from "./zh";
-import { zhHant } from "./zh-hant";
 import { ja } from "./ja";
-import { de } from "./de";
-import { es } from "./es";
-import { fr } from "./fr";
-import { tr } from "./tr";
-import { uk } from "./uk";
-import { af } from "./af";
-import { ko } from "./ko";
-import { it } from "./it";
-import { ga } from "./ga";
-import { pt } from "./pt";
-import { ru } from "./ru";
-import { hu } from "./hu";
 
 const TRANSLATIONS: Record<Locale, Translations> = {
   en,
-  zh,
-  "zh-hant": zhHant,
   ja,
-  de,
-  es,
-  fr,
-  tr,
-  uk,
-  af,
-  ko,
-  it,
-  ga,
-  pt,
-  ru,
-  hu,
 };
 
 // Display metadata for the language picker — endonym (native name) so users
@@ -43,21 +15,7 @@ const TRANSLATIONS: Record<Locale, Translations> = {
 // can share the same list.
 export const LOCALE_META: Record<Locale, { name: string; flagCountryCode: string }> = {
   en: { name: "English", flagCountryCode: "gb" },
-  zh: { name: "简体中文", flagCountryCode: "cn" },
-  "zh-hant": { name: "繁體中文", flagCountryCode: "tw" },
-  ja: { name: "日本語", flagCountryCode: "jp" },
-  de: { name: "Deutsch", flagCountryCode: "de" },
-  es: { name: "Español", flagCountryCode: "es" },
-  fr: { name: "Français", flagCountryCode: "fr" },
-  tr: { name: "Türkçe", flagCountryCode: "tr" },
-  uk: { name: "Українська", flagCountryCode: "ua" },
-  af: { name: "Afrikaans", flagCountryCode: "za" },
-  ko: { name: "한국어", flagCountryCode: "kr" },
-  it: { name: "Italiano", flagCountryCode: "it" },
-  ga: { name: "Gaeilge", flagCountryCode: "ie" },
-  pt: { name: "Português", flagCountryCode: "pt" },
-  ru: { name: "Русский", flagCountryCode: "ru" },
-  hu: { name: "Magyar", flagCountryCode: "hu" },
+  ja: { name: "日本語", flagCountryCode: "jp" }
 };
 
 const SUPPORTED_LOCALES = Object.keys(TRANSLATIONS) as Locale[];

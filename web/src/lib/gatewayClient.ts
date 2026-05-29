@@ -36,6 +36,7 @@ export type GatewayEventName =
   | "background.complete"
   | "error"
   | "skin.changed"
+  | "dev_server.detected"
   | (string & {});
 
 export interface GatewayEvent<P = unknown> {

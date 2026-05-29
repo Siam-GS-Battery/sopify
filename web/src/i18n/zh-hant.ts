@@ -68,7 +68,7 @@ export const zhHant: Translations = {
     },
     nav: {
       analytics: "分析",
-      chat: "對話",
+      chat: "Terminal",
       config: "設定",
       cron: "排程任務",
       documentation: "文件",

@@ -1,4 +1,5 @@
-"""Policy file store with hot-reload via mtime polling.
+"""
+Policy file store with hot-reload via mtime polling.
 
 The proxy reads the policy via :class:`PolicyStore` and gets a callback
 every time the file changes. Polling (vs inotify/fsevents) keeps it
@@ -24,7 +25,8 @@ DEFAULT_POLL_INTERVAL = 1.0
 
 
 class PolicyStore:
-    """Auto-reloading wrapper around the on-disk policy file.
+    """
+    Auto-reloading wrapper around the on-disk policy file.
 
     Usage:
         store = PolicyStore("~/.sopify/network-policy.json")
@@ -55,6 +57,8 @@ class PolicyStore:
         self._listeners.append(callback)
         callback(self.policy)
 
+
+
     def reload(self) -> NetworkPolicy:
         """Force a reload regardless of mtime. Useful from tests / signal
         handlers."""
@@ -69,11 +73,15 @@ class PolicyStore:
                 log.exception("policy listener raised")
         return policy
 
+
+
     def _stat_mtime(self) -> float:
         try:
             return self._path.stat().st_mtime
         except FileNotFoundError:
             return 0.0
+
+
 
     def _poll_loop(self) -> None:
         while not self._stop.wait(self._poll_interval):
@@ -89,6 +97,8 @@ class PolicyStore:
                     # the same broken file.
                     self._mtime = current
 
+
+
     def start(self) -> None:
         """Spawn the background polling thread. Idempotent."""
         if self._thread is not None and self._thread.is_alive():
@@ -99,15 +109,21 @@ class PolicyStore:
         )
         self._thread.start()
 
+
+
     def stop(self) -> None:
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
 
+
+
     def __enter__(self) -> "PolicyStore":
         self.start()
         return self
+
+
 
     def __exit__(self, *_exc: object) -> None:
         self.stop()

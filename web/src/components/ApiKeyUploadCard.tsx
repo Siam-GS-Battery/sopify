@@ -81,6 +81,11 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
     };
   }, [providers]);
 
+  // When ~/.hermes/.env is on a read-only mount (legacy sandbox built with
+  // the old :ro flag, or a host with RO home) Save/Remove will 409 — gate
+  // the controls and show guidance to recreate the sandbox or save on host.
+  const envWritable = providers?.[0]?.env_writable ?? true;
+
   const startEdit = useCallback(
     (providerId: string) =>
       setEdits((cur) => ({
@@ -144,8 +149,12 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
           onSuccessRef.current?.(`${provider.label} key ${where}`);
         }
         cancelEdit(provider.id);
-        // Auto-test if supported (anthropic/openai).
-        if (provider.id === "anthropic" || provider.id === "openai") {
+        // Auto-test if supported (anthropic/openai/alibaba).
+        if (
+          provider.id === "anthropic" ||
+          provider.id === "openai" ||
+          provider.id === "alibaba"
+        ) {
           setRowState((s) => ({ ...s, [provider.id]: "testing" }));
           try {
             const t = await api.testApiKey(provider.id);
@@ -252,7 +261,19 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
         </div>
         <CardDescription>
           Upload provider API keys without leaving the dashboard.
-          {providers && providers[0]?.sbx_available !== false ? (
+          {!envWritable ? (
+            <>
+              {" "}
+              <span className="text-destructive">
+                <code>~/.hermes/.env</code> is read-only — keys can't be
+                saved from here.
+              </span>{" "}
+              Recreate the sandbox (<code>sbx rm &lt;sandbox-name&gt;</code>{" "}
+              then restart the dashboard) so the new <code>:rw</code> mount
+              takes effect, or set keys from the host with{" "}
+              <code>sopify api-key set &lt;provider&gt;</code>.
+            </>
+          ) : providers && providers[0]?.sbx_available !== false ? (
             <>
               {" "}
               Keys sync to <code>~/.hermes/.env</code> and the sbx secret store
@@ -294,17 +315,17 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-medium">{p.label}</span>
                         {p.set_in_env ? (
-                          <Badge variant="default" className="text-[10px]">
+                          <Badge tone="default" className="text-[10px]">
                             <Check className="mr-1 h-3 w-3" /> Active
                           </Badge>
                         ) : (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge tone="outline" className="text-[10px]">
                             Not set
                           </Badge>
                         )}
                         {p.set_in_sbx_secret && (
                           <Badge
-                            variant="secondary"
+                            tone="secondary"
                             className="text-[10px]"
                             title="Synced to sbx secret store"
                           >
@@ -312,12 +333,12 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
                           </Badge>
                         )}
                         {test?.ok === true && (
-                          <Badge variant="default" className="text-[10px]">
+                          <Badge tone="default" className="text-[10px]">
                             <Check className="mr-1 h-3 w-3" /> Verified
                           </Badge>
                         )}
                         {test?.ok === false && (
-                          <Badge variant="destructive" className="text-[10px]">
+                          <Badge tone="destructive" className="text-[10px]">
                             <XIcon className="mr-1 h-3 w-3" /> Test failed
                           </Badge>
                         )}
@@ -344,7 +365,9 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
                     {!edit && (
                       <>
                         {p.set_in_env &&
-                          (p.id === "anthropic" || p.id === "openai") && (
+                          (p.id === "anthropic" ||
+                            p.id === "openai" ||
+                            p.id === "alibaba") && (
                             <Button
                               size="sm"
                               outlined
@@ -361,7 +384,12 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
                           size="sm"
                           outlined
                           onClick={() => startEdit(p.id)}
-                          disabled={state !== "idle"}
+                          disabled={state !== "idle" || !envWritable}
+                          title={
+                            !envWritable
+                              ? "~/.hermes/.env is read-only — recreate the sandbox or save on host"
+                              : undefined
+                          }
                         >
                           {p.set_in_env ? "Update" : "Add key"}
                         </Button>
@@ -370,9 +398,14 @@ export function ApiKeyUploadCard({ onError, onSuccess }: Props) {
                             size="sm"
                             outlined
                             onClick={() => setRemoveTarget(p)}
-                            disabled={state !== "idle"}
+                            disabled={state !== "idle" || !envWritable}
                             prefix={<Trash2 />}
                             aria-label={`Remove ${p.label} key`}
+                            title={
+                              !envWritable
+                                ? "~/.hermes/.env is read-only — recreate the sandbox or remove on host"
+                                : undefined
+                            }
                           />
                         )}
                       </>

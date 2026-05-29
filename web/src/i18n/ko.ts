@@ -68,7 +68,7 @@ export const ko: Translations = {
     },
     nav: {
       analytics: "분석",
-      chat: "채팅",
+      chat: "Terminal",
       config: "설정",
       cron: "Cron",
       documentation: "문서",

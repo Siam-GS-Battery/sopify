@@ -1,4 +1,5 @@
-"""Abstract base class for pluggable context engines.
+"""
+Abstract base class for pluggable context engines.
 
 A context engine controls how conversation context is managed when
 approaching the model's token limit. The built-in ContextCompressor
@@ -100,8 +101,10 @@ class ContextEngine(ABC):
                 don't support it may simply ignore this argument.
         """
 
-    # -- Optional: pre-flight check ----------------------------------------
 
+
+
+    # -- Optional: pre-flight check ----------------------------------------
     def should_compress_preflight(self, messages: List[Dict[str, Any]]) -> bool:
         """Quick rough check before the API call (no real token count yet).
 
@@ -110,8 +113,9 @@ class ContextEngine(ABC):
         """
         return False
 
-    # -- Optional: manual /compress preflight ------------------------------
 
+
+    # -- Optional: manual /compress preflight ------------------------------
     def has_content_to_compress(self, messages: List[Dict[str, Any]]) -> bool:
         """Quick check: is there anything in ``messages`` that can be compacted?
 
@@ -134,12 +138,16 @@ class ContextEngine(ABC):
         kwargs may include hermes_home, platform, model, etc.
         """
 
+
+
     def on_session_end(self, session_id: str, messages: List[Dict[str, Any]]) -> None:
         """Called at real session boundaries (CLI exit, /reset, gateway expiry).
 
         Use this to flush state, close DB connections, etc.
         NOT called per-turn — only when the session truly ends.
         """
+
+
 
     def on_session_reset(self) -> None:
         """Called on /new or /reset. Reset per-session state.
@@ -151,6 +159,9 @@ class ContextEngine(ABC):
         self.last_total_tokens = 0
         self.compression_count = 0
 
+
+
+
     # -- Optional: tools ---------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
@@ -160,6 +171,9 @@ class ContextEngine(ABC):
         for lcm_grep, lcm_describe, lcm_expand here.
         """
         return []
+
+
+
 
     def handle_tool_call(self, name: str, args: Dict[str, Any], **kwargs) -> str:
         """Handle a tool call from the agent.
@@ -172,6 +186,9 @@ class ContextEngine(ABC):
         """
         import json
         return json.dumps({"error": f"Unknown context engine tool: {name}"})
+
+
+
 
     # -- Optional: status / display ----------------------------------------
 
@@ -190,6 +207,9 @@ class ContextEngine(ABC):
             ),
             "compression_count": self.compression_count,
         }
+
+
+
 
     # -- Optional: model switch support ------------------------------------
 

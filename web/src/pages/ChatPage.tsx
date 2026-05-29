@@ -1,21 +1,3 @@
-/**
- * ChatPage — embeds `hermes --tui` inside the dashboard.
- *
- *   <div host> (dashboard chrome)                                         .
- *     └─ <div wrapper> (rounded, dark bg, padded — the "terminal window"  .
- *         look that gives the page a distinct visual identity)            .
- *         └─ @xterm/xterm Terminal (WebGL renderer, Unicode 11 widths)    .
- *              │ onData      keystrokes → WebSocket → PTY master          .
- *              │ onResize    terminal resize → `\x1b[RESIZE:cols;rows]`   .
- *              │ write(data) PTY output bytes → VT100 parser              .
- *              ▼                                                          .
- *     WebSocket /api/pty?token=<session>                                  .
- *          ▼                                                              .
- *     FastAPI pty_ws  (hermes_cli/web_server.py)                          .
- *          ▼                                                              .
- *     POSIX PTY → `node ui-tui/dist/entry.js` → tui_gateway + AIAgent     .
- */
-
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -37,6 +19,26 @@ import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
 import { PluginSlot } from "@/plugins";
 
+
+/**
+ * ChatPage — embeds `hermes --tui` inside the dashboard.
+ *
+ *   <div host> (dashboard chrome)                                         .
+ *     └─ <div wrapper> (rounded, dark bg, padded — the "terminal window"  .
+ *         look that gives the page a distinct visual identity)            .
+ *         └─ @xterm/xterm Terminal (WebGL renderer, Unicode 11 widths)    .
+ *              │ onData      keystrokes → WebSocket → PTY master          .
+ *              │ onResize    terminal resize → `\x1b[RESIZE:cols;rows]`   .
+ *              │ write(data) PTY output bytes → VT100 parser              .
+ *              ▼                                                          .
+ *     WebSocket /api/pty?token=<session>                                  .
+ *          ▼                                                              .
+ *     FastAPI pty_ws  (hermes_cli/web_server.py)                          .
+ *          ▼                                                              .
+ *     POSIX PTY → `node ui-tui/dist/entry.js` → tui_gateway + AIAgent     .
+ */
+
+
 function buildWsUrl(
   token: string,
   resume: string | null,
@@ -48,6 +50,8 @@ function buildWsUrl(
   return `${proto}//${window.location.host}${HERMES_BASE_PATH}/api/pty?${qs.toString()}`;
 }
 
+
+
 // Channel id ties this chat tab's PTY child (publisher) to its sidebar
 // (subscriber).  Generated once per mount so a tab refresh starts a fresh
 // channel — the previous PTY child terminates with the old WS, and its
@@ -58,6 +62,8 @@ function generateChannelId(): string {
   }
   return `chat-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
 }
+
+
 
 // Colors for the terminal body — Sopify light theme.
 // White background + dark navy text + blue cursor to match the rest of
@@ -78,6 +84,8 @@ const TERMINAL_THEME = {
   cyan:    "#0DB7ED",  brightCyan:    "#0891B2",
   white:   "#384D54",  brightWhite:   "#03061E",
 };
+
+
 
 /**
  * CSS width for xterm font tiers.

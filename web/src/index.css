@@ -421,6 +421,17 @@ kbd {
   color: #03061E !important;
 }
 
+/* `mix-blend-mode: plus-lighter` is applied (inline + via `.blend-lighter`)
+   to page-header titles, sidebar brand, card titles, etc. — it gives a
+   subtle additive glow against the dark Hermes background. On Sopify's
+   light surface it saturates each channel toward 255 and pushes the dark
+   navy text to white, which is what hides the header title.
+   `!important` lets the CSS beat the inline style. */
+:root[data-theme-name="sopify"] .blend-lighter,
+:root[data-theme-name="sopify"] [style*="mix-blend-mode"] {
+  mix-blend-mode: normal !important;
+}
+
 /* ====================================================================== */
 /* CSS_STYLE.md — Rhino-style component overrides for Sopify theme        */
 /* Targets only `[data-theme-name="sopify"]` so legacy Hermes themes      */

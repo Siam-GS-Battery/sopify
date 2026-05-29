@@ -9,11 +9,14 @@ TERMINAL_SETUP_AUTH_METHOD_ID = "hermes-setup"
 
 
 def detect_provider() -> Optional[str]:
-    """Resolve the active Hermes runtime provider, or None if unavailable.
+    """
+    Resolve the active Hermes runtime provider, or None if unavailable.
 
     Treats a ``Callable`` ``api_key`` (Azure Foundry Entra ID bearer
     token provider — see :mod:`agent.azure_identity_adapter`) as a valid
-    credential. Without this, ACP sessions for Entra-configured Foundry
+    credential. 
+    
+    Without this, ACP sessions for Entra-configured Foundry
     deployments silently default to ``"openrouter"`` and the ACP auth
     handshake rejects the legitimate provider.
     """
@@ -33,17 +36,25 @@ def detect_provider() -> Optional[str]:
     return None
 
 
+
+
 def has_provider() -> bool:
-    """Return True if Hermes can resolve any runtime provider credentials."""
+    """
+    Return True if Hermes can resolve any runtime provider credentials.
+    """
     return detect_provider() is not None
 
 
+
+
 def build_auth_methods() -> list[Any]:
-    """Return registry-compatible ACP auth methods for Hermes.
+    """
+    Return registry-compatible ACP auth methods for Hermes.
 
     The official ACP registry validates that agents advertise at least one
-    usable auth method during the initial handshake. A fresh Zed install may
-    not have Hermes provider credentials configured yet, so Hermes always
+    usable auth method during the initial handshake. 
+    
+    A fresh Zed install may not have Hermes provider credentials configured yet, so Hermes always
     advertises a terminal setup method. When credentials are already present,
     it also advertises the resolved provider as the default agent-managed
     runtime credential method.
@@ -63,6 +74,7 @@ def build_auth_methods() -> list[Any]:
                 ),
             )
         )
+
 
     methods.append(
         TerminalAuthMethod(

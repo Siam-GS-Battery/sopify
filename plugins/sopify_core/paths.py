@@ -1,4 +1,6 @@
-"""Canonical paths for Sopify config / state.
+"""
+Helpers Function for finding folder and file state
+Canonical paths for Sopify config / state.
 
 REQ traceability:
   REQ-1.2.6 / REQ-1.2.7 / REQ-1.2.8 — mount points
@@ -7,7 +9,6 @@ REQ traceability:
   REQ-9.1.1 — settings.json (managed, 0444)
 """
 from __future__ import annotations
-
 import os
 from pathlib import Path
 

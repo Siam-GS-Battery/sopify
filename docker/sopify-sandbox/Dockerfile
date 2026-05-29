@@ -105,7 +105,7 @@ RUN mkdir -p /workspace /sopify-auth /sopify-config /sopify-sessions \
 # venv python. If any of these are missing the build fails here, not
 # at the user's first dashboard launch.
 USER sopify
-RUN /opt/sopify/.venv/bin/python -c "import yaml, fastapi, uvicorn, anthropic, ptyprocess; print('venv smoke ok')"
+RUN /opt/sopify/.venv/bin/python -c "import yaml, fastapi, uvicorn, anthropic, ptyprocess, multipart; print('venv smoke ok')"
 RUN test -f /opt/sopify/ui-tui/dist/entry.js \
     && test -f /opt/sopify/ui-tui/node_modules/@hermes/ink/package.json \
     && echo "tui bundle ok"

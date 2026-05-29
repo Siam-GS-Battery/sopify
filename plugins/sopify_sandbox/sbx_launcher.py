@@ -542,14 +542,23 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     #     command + plugins). Skip when cwd == app_root (dev mode where
     #     the user runs sopify from inside the repo, or has symlinked
     #     ~/.sopify-app → source repo). sbx rejects duplicate workspaces.
-    #   - ~/.hermes :ro                — host .env / auth.json so the
-    #     microVM's env_loader sees the user's ANTHROPIC_TOKEN.
+    #   - ~/.hermes (rw, default)      — host .env / auth.json so the
+    #     microVM's env_loader sees the user's ANTHROPIC_TOKEN, AND so the
+    #     dashboard's API-key form (token-protected `/api/providers/api-key`)
+    #     can persist new keys back to the host's ~/.hermes/.env without
+    #     bouncing the user out to a host terminal.  sbx workspaces default
+    #     to rw; an explicit ``:rw`` suffix is NOT recognised and silently
+    #     creates a sibling dir literally named ``.hermes:rw`` — use a bare
+    #     path here.  Trade-off: the agent's shell tools could in principle
+    #     overwrite credentials too — accepted because the dashboard UX
+    #     requires it and the trust boundary is "user-owned host" anyway.
+    #     For stricter isolation, run `sopify dashboard --no-sandbox`.
     workspaces = [cwd]
     if app_root_resolved != cwd_resolved:
         workspaces.append(f"{app_root_resolved}:ro")
     hermes_home = Path.home() / ".hermes"
     if hermes_home.is_dir() and hermes_home.resolve() != cwd_resolved:
-        workspaces.append(f"{hermes_home}:ro")
+        workspaces.append(str(hermes_home))
     # ~/.sopify/ holds the daemon's bearer token + port (config.yaml). The
     # dashboard's ENCM proxy (hermes_cli/encm_client.py) reads it to forward
     # /api/encm/* to the daemon on the host at 127.0.0.1:7777. Without this
@@ -636,8 +645,18 @@ def spawn(argv: List[str], *, with_kit: bool = True,
     #   - falling back to /usr/local/bin/sopify is automatic
     #   - the user sees ``sopify: dev-mode active …`` when it kicks in
     sopify_argv = " ".join(_shellquote(a) for a in argv)
+    # cd into the user's host cwd before exec. sbx mounts that path at the
+    # same host absolute path inside the sandbox, so it always exists.
+    # Without this, sbx exec lands bash in the image's WORKDIR (/workspace,
+    # an empty stub directory) — both the dashboard's Files page root and
+    # the chat agent's terminal subprocess end up there instead of the
+    # user's actual project, and agent writes either fail (sopify-harness
+    # mount is ro) or fall back to /home/sopify (sandbox-only scratch,
+    # invisible to the host and to the Files page).
+    cd_to_workspace = f"cd {_shellquote(cwd)} 2>/dev/null || true; "
     inner_cmd = (
-        "export COLORTERM=truecolor; "
+        cd_to_workspace
+        + "export COLORTERM=truecolor; "
         "export TERM=xterm-256color; "
         # Pin Python to the Sopify venv so any subprocess (in particular
         # the TUI's ``python -m tui_gateway.entry`` child, spawned with

@@ -1,4 +1,4 @@
-"""JSONL audit-log writer.
+"""JSONL (JSON Line) audit-log writer.
 
 Writes one event per line to ``{log_dir}/YYYY-MM-DD.jsonl``. The file is
 opened append-only and re-opened on UTC date rollover so each day's events

@@ -53,6 +53,14 @@ PROVIDERS: tuple[Provider, ...] = (
              "https://novita.ai/dashboard/key"),
     Provider("huggingface", "Hugging Face",      "HUGGINGFACE_TOKEN",  None,        "hf_",
              "https://huggingface.co/settings/tokens"),
+    # Alibaba Cloud Model Studio (Singapore intl) — serves Qwen Plus/Max/Turbo
+    # and the qwen3.6-plus family via DashScope's OpenAI-compatible endpoint.
+    # Provider config lives in hermes_cli/auth.py ("alibaba"); base URL is
+    # https://dashscope-intl.aliyuncs.com/compatible-mode/v1. Keys may be the
+    # legacy ``sk-`` or the workspace-scoped ``sk-ws-`` form — both share the
+    # ``sk-`` prefix so the basic sanity check accepts either.
+    Provider("alibaba",     "Alibaba (Qwen Cloud)", "DASHSCOPE_API_KEY", None,      "sk-",
+             "https://modelstudio.console.alibabacloud.com"),
 )
 
 

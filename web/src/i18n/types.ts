@@ -1,20 +1,6 @@
 export type Locale =
   | "en"
-  | "zh"
-  | "zh-hant"
   | "ja"
-  | "de"
-  | "es"
-  | "fr"
-  | "tr"
-  | "uk"
-  | "af"
-  | "ko"
-  | "it"
-  | "ga"
-  | "pt"
-  | "ru"
-  | "hu";
 
 export interface Translations {
   // ── Common ──
@@ -69,6 +55,9 @@ export interface Translations {
     brand: string;
     brandShort: string;
     closeNavigation: string;
+    collapseNavigation?: string;
+    configureNavSection?: string;
+    expandNavigation?: string;
     closeModelTools: string;
     footer: {
       org: string;

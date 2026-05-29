@@ -389,6 +389,176 @@ def _emit(event: str, sid: str, payload: dict | None = None):
     write_json({"jsonrpc": "2.0", "method": "event", "params": params})
 
 
+def _session_key_for(sid: str) -> str | None:
+    """Return the durable DB key for a gateway sid, or None if unknown."""
+    s = _sessions.get(sid)
+    if s is None:
+        return None
+    key = s.get("session_key")
+    return key if isinstance(key, str) and key else None
+
+
+def _sids_for_session_key(key: str) -> list[str]:
+    """Reverse-lookup: which in-memory gateway sid(s) currently hold this
+    DB session key. Usually 0 or 1; can be >1 only if two browser tabs
+    resume the same session simultaneously."""
+    return [sid for sid, s in _sessions.items() if s.get("session_key") == key]
+
+
+def _emit_dev_server_to_session(session_key: str, payload: dict) -> None:
+    """Push a `dev_server.detected` event to every WS connection bound to
+    this session_key. Called by the background poller in dev_server_manager
+    when /proc detects a new (or vanished) LISTEN port. Silent no-op if
+    no sid is open for the key (browser tab closed)."""
+    for sid in _sids_for_session_key(session_key):
+        try:
+            _emit("dev_server.detected", sid, payload)
+        except Exception as e:
+            _log.debug("emit dev_server.detected failed for sid=%s: %s", sid, e)
+
+
+_dev_server_init_done = False
+
+
+def _ensure_dev_server_init() -> None:
+    """One-shot init: wire the gateway's emit helper into dev_server_manager
+    and kick off its /proc poller. Subsequent calls are no-ops. Guarded
+    against ImportError so subprocess-mode gateway (which lacks the module)
+    still functions."""
+    global _dev_server_init_done
+    if _dev_server_init_done:
+        return
+    try:
+        from hermes_cli import dev_server_manager as _dsm
+        _dsm.set_detect_callback(_emit_dev_server_to_session)
+        _dsm.start_poller(interval=2.0)
+        _dev_server_init_done = True
+    except Exception as e:
+        _log.debug("dev_server_manager init skipped: %s", e)
+        # Mark done anyway so we don't re-attempt on every RPC
+        _dev_server_init_done = True
+
+
+def _set_active_session_for_sid(sid: str) -> None:
+    """Tell the dev-server manager that this sid's session is now active.
+
+    Called from session.create / session.resume / prompt.submit so the
+    iframe panel always shows the session the user is currently in.
+    Triggers the pause-other / revive-this lifecycle.
+
+    After the switch, re-emit `dev_server.detected` for every spec that is
+    still running in this session so the frontend's useChatStream state
+    (which is empty on a fresh resume) can rehydrate without polling.
+    """
+    key = _session_key_for(sid)
+    if not key:
+        return
+    _ensure_dev_server_init()
+    try:
+        from hermes_cli import dev_server_manager as _dsm
+        summary = _dsm.set_active_session(key)
+        # Re-emit detected events for everything currently up under this
+        # session — covers the just-resumed case where the frontend never
+        # saw the original tool-output URL.
+        for spec in _dsm.list_for_session(key):
+            if spec.get("status") != "running":
+                continue
+            _emit(
+                "dev_server.detected",
+                sid,
+                {
+                    "port": spec.get("port"),
+                    "url": spec.get("url"),
+                    "session_key": spec.get("session_key"),
+                    "status": spec.get("status"),
+                    "pid": spec.get("pid"),
+                },
+            )
+        # Also surface any failed revives so the UI can show a warning row.
+        for spec in summary.get("failed", []):
+            _emit(
+                "dev_server.detected",
+                sid,
+                {
+                    "port": spec.get("port"),
+                    "url": spec.get("url"),
+                    "session_key": spec.get("session_key"),
+                    "status": "failed",
+                    "error": spec.get("last_error"),
+                },
+            )
+    except Exception as e:
+        # Subprocess-mode gateway has no _dsm — fail quietly.
+        _log.debug("set_active_session skipped: %s", e)
+
+
+def _detect_dev_server_from_tool(
+    sid: str, session: dict | None, tool_name: str, args: dict, result: str
+) -> None:
+    """Parse a tool's stdout for `http://localhost:<port>` and register it.
+
+    Stays no-op when the dev_server_manager module isn't importable (PTY
+    subprocess gateway) — that mode has no iframe to drive.
+    """
+    if not result:
+        return
+    try:
+        from hermes_cli import dev_server_manager as _dsm
+    except ImportError:
+        return
+    hit = _dsm.extract_dev_url(result)
+    if hit is None:
+        return
+    port, url = hit
+    key = _session_key_for(sid)
+    if not key:
+        return
+    # Try to extract command + cwd from the tool args for revive.
+    cmd_hint = _extract_command_hint(tool_name, args)
+    cwd_hint = _extract_cwd_hint(tool_name, args)
+    try:
+        spec = _dsm.register_detected_url(
+            key, port, url, command_hint=cmd_hint, cwd_hint=cwd_hint
+        )
+    except Exception as e:
+        _log.warning("register_detected_url failed: %s", e)
+        return
+    _emit(
+        "dev_server.detected",
+        sid,
+        {
+            "port": spec.port,
+            "url": spec.url,
+            "session_key": spec.session_key,
+            "status": spec.status,
+            "pid": spec.pid,
+        },
+    )
+
+
+def _extract_command_hint(tool_name: str, args: dict) -> str | None:
+    """Best-effort extract of the shell command from a tool's args. Different
+    tools name the field differently; cover the common ones."""
+    if not isinstance(args, dict):
+        return None
+    for key in ("command", "cmd", "shell", "script", "code"):
+        v = args.get(key)
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
+
+
+def _extract_cwd_hint(tool_name: str, args: dict) -> str | None:
+    """Best-effort extract of working directory for revive. Falls back to
+    `os.getcwd()` because that's where the agent was launched."""
+    if isinstance(args, dict):
+        for key in ("cwd", "working_directory", "directory", "wd"):
+            v = args.get(key)
+            if isinstance(v, str) and v.strip():
+                return v
+    return os.getenv("TERMINAL_CWD", os.getcwd())
+
+
 def _status_update(sid: str, kind: str, text: str | None = None):
     body = (text if text is not None else kind).strip()
     if not body:
@@ -1545,6 +1715,14 @@ def _on_tool_complete(sid: str, tool_call_id: str, name: str, args: dict, result
     summary = _tool_summary(name, result, duration_s)
     if summary:
         payload["summary"] = summary
+
+    # Per-session dev-server detection: scan the tool's stdout for any
+    # http://localhost:<port> mention. Vite/Next/Astro/CRA all print one when
+    # ready; intercepting `result` catches the URL at the same moment the user
+    # sees it in the bubble. `command_hint` is the shell command from the
+    # invoking tool's args (when present), used later to revive on session
+    # re-activate. See hermes_cli/dev_server_manager.py for the lifecycle.
+    _detect_dev_server_from_tool(sid, session, name, args, result)
     if name == "todo":
         try:
             data = json.loads(result)
@@ -2154,10 +2332,21 @@ def _(rid, params: dict) -> dict:
     build_timer.daemon = True
     build_timer.start()
 
+    # Newly-created sessions become the active one for dev-server lifecycle:
+    # the iframe panel switches to show this session's preview, and any
+    # other session's dev servers are paused. See dev_server_manager.py.
+    _set_active_session_for_sid(sid)
+
     return _ok(
         rid,
         {
             "session_id": sid,
+            # ``session_id`` is the in-memory gateway handle (8-char hex)
+            # used to route messages while the process is alive.
+            # ``session_key`` is the durable DB key (timestamp + random)
+            # the agent writes its history under — pass this back to
+            # session.resume to actually rehydrate the conversation.
+            "session_key": key,
             "info": {
                 "model": _resolve_model(),
                 "tools": {},
@@ -2292,10 +2481,19 @@ def _(rid, params: dict) -> dict:
         _init_session(sid, target, agent, history, cols=int(params.get("cols", 80)))
     except Exception as e:
         return _err(rid, 5000, f"resume failed: {e}")
+
+    # Resumed session takes over as the active one — see session.create for
+    # rationale. Triggers pause/revive of dev servers across sessions.
+    _set_active_session_for_sid(sid)
+
     return _ok(
         rid,
         {
             "session_id": sid,
+            # See session.create — ``session_key`` is the durable DB key
+            # callers should persist for the next resume. Equal to
+            # ``resumed`` here since we just rehydrated that exact session.
+            "session_key": target,
             "resumed": target,
             "message_count": len(messages),
             "messages": messages,
@@ -3028,6 +3226,11 @@ def _(rid, params: dict) -> dict:
         if session.get("running"):
             return _err(rid, 4009, "session busy")
         session["running"] = True
+
+    # Sending a prompt re-asserts this session as the active one for the
+    # dev-server iframe. Switching tabs in the browser without typing
+    # doesn't change active; explicit interaction does.
+    _set_active_session_for_sid(sid)
 
     _start_agent_build(sid, session)
 

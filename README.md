@@ -1,216 +1,260 @@
-# Sopify ☤
+# ระบบจัดการพนักงาน (Employee Management System)
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Status-Phase%201-67E8F9?style=for-the-badge" alt="Status: Phase 1">
-  <img src="https://img.shields.io/badge/Org-GS%20Battery-22D3EE?style=for-the-badge" alt="GS Battery">
-  <img src="https://img.shields.io/badge/License-MIT-06B6D4?style=for-the-badge" alt="License: MIT">
-  <a href="DESIGN_ARCHITECTURE.md"><img src="https://img.shields.io/badge/Spec-DESIGN__ARCHITECTURE-0891B2?style=for-the-badge" alt="Spec"></a>
-</p>
+ระบบจัดการพนักงานที่ใช้ IBM Carbon Design System พร้อม Role-based Access Control
 
-> **Sopify ≠ a new product.**
-> Sopify = an open-source AI agent + a Docker sandbox (embedded) + 3 working
-> modes + org governance. The base runtime is the upstream fork we maintain
-> in this repo; the Sopify layer lives entirely under `plugins/sopify_*/`
-> and never modifies the runtime core (REQ-0.3).
+## 🎨 Features
 
----
+- **3 ระดับผู้ใช้งาน:**
+  - **พนักงานทั่วไป** - กรอกฟอร์มข้อมูลพนักงาน
+  - **Admin** - ดูและจัดการข้อมูลพนักงานทั้งหมด
+  - **ผู้ตรวจสอบ** - อนุมัติ/ปฏิเสธข้อมูลพนักงาน
 
-## What problem does Sopify solve?
+- **UI/UX:**
+  - IBM Carbon Design System (Minimal Tone สีฟ้า-ขาว)
+  - Responsive Design
+  - Modern และ Clean Interface
 
-GS Battery needed an AI coding assistant that:
+## 🛠 Tech Stack
 
-| Concern | How Sopify handles it |
-|---|---|
-| **Safety** — non-engineers must not be able to run `rm -rf /`, drop databases, force-push to main | Hard-deny pattern list at the tool-call layer; non-overridable, even for `dev` role (REQ-6.1.4) |
-| **Audit** — IT needs evidence of every AI action: who, what, when, how much | OpenTelemetry pipeline with 5 typed events streaming to Grafana Alloy → Loki/Prometheus (REQ-7) |
-| **Isolation** — AI must not touch host files / network outside what's authorized | Every command runs inside a `sopify-sandbox` Docker container with egress whitelist (REQ-1) |
-| **Cost** — token spend must be controllable per mode, per user | Per-mode daily budgets + provider cascade with 1-hour blacklist on quota/auth failure (REQ-2, REQ-9.3) |
-| **Mode-fit** — different users have different needs: builder vs. employee vs. engineer | Three modes: `/vibe` (guided app builder), `/living` (24/7 employee), `/code-with-you` (pair programming) |
-| **Governance** — IT must be able to push settings, set roles, override providers | IT-managed `settings.json` at 0444 + `sopify admin` subcommands + live mtime polling (REQ-9) |
+### Frontend
+- React 18
+- IBM Carbon Design System (@carbon/react)
+- React Router v6
+- Axios
 
----
+### Backend
+- Node.js
+- Express
+- MongoDB (Mongoose)
 
-## Quick start
+## 📋 Prerequisites
 
-### One-line install (recommended)
+ก่อนเริ่มต้น ต้องติดตั้งโปรแกรมเหล่านี้:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Siam-GS-Battery/sopify/main/scripts/sopify-install.sh | bash
-```
+- Node.js (v16 หรือสูงกว่า)
+- MongoDB (v5 หรือสูงกว่า)
+- npm หรือ yarn
 
-The installer checks Docker, installs `uv` if needed, clones into
-`~/.sopify-app/`, symlinks `sopify` into `~/.local/bin`, and runs
-`sopify install` to set up the sandbox.
+## 🚀 Installation
 
-### Then chat from your browser
+### 1. Clone repository
 
 ```bash
-sopify login           # add an API key (Anthropic, OpenRouter, etc.)
-sopify dashboard       # opens http://127.0.0.1:9119 in your browser
+git clone <repository-url>
+cd employee-management-system
 ```
 
-The dashboard gives you a chat pane, mode switcher, session history,
-config editor, and skill/tool inspector — all in the browser, **no
-terminal commands needed after this point.**
+### 2. ติดตั้ง Dependencies
 
-### Terminal mode (power users)
+#### วิธีที่ 1: ติดตั้งทั้งหมดพร้อมกัน
+```bash
+npm run install:all
+```
+
+#### วิธีที่ 2: ติดตั้งแยกส่วน
+```bash
+# ติดตั้ง root dependencies
+npm install
+
+# ติดตั้ง client dependencies
+cd client
+npm install
+
+# ติดตั้ง server dependencies
+cd ../server
+npm install
+```
+
+### 3. ตั้งค่า Environment Variables
+
+สร้างไฟล์ `.env` ในโฟลเดอร์ `server/`:
 
 ```bash
-sopify chat                   # generic chat (uses runtime defaults)
-sopify /vibe                  # guided app builder
-sopify /living                # 24/7 AI employee
-sopify /code-with-you         # pair programming
+cd server
+cp .env.example .env
 ```
 
-Full manual: [`docs/sopify/INSTALL.md`](docs/sopify/INSTALL.md)
-Tutorial:    [`docs/sopify/TUTORIAL.md`](docs/sopify/TUTORIAL.md)
-
----
-
-## Three modes
-
-| Mode              | For                | Defaults                                                           |
-|-------------------|--------------------|--------------------------------------------------------------------|
-| `/vibe`           | Non-engineers building internal apps     | Structured intake → 2-3 approaches → IT handoff (200k tokens/day) |
-| `/living`         | A department's 24/7 AI employee          | Persistent session, strict deny-list, sequential tools (300k/day) |
-| `/code-with-you`  | Engineers who want explain-then-execute  | Confirm every tool call, sequential only, lower budget (50k/day)  |
-
-Switch with the slash command from anywhere: `/vibe`, `/living`, `/code-with-you`.
-
----
-
-## Architecture in one diagram
-
-```
-                           Host (user laptop)
-                                    │
-                            sopify (launcher)
-                                    │ docker run sopify-sandbox:latest
-                                    ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                      sopify-sandbox container                         │
-│                                                                       │
-│   /workspace (rw)   /sopify-auth (ro)   /sopify-config (ro)           │
-│   /sopify-sessions (rw)                                               │
-│                                                                       │
-│  ┌────────────────────────────────────────────────────────────┐      │
-│  │             Sopify runtime (upstream fork)                  │      │
-│  │                                                              │      │
-│  │  + sopify-core        REQ-0   bootstrap, version, doctor    │      │
-│  │  + sopify-providers   REQ-2   ProviderRouter cascade        │      │
-│  │  + sopify-guardrails  REQ-6   HARD_DENY / SOFT_DENY + roles │      │
-│  │  + sopify-otel        REQ-7   5-event audit pipeline        │      │
-│  │  + sopify-skills      REQ-8   company-sop / mode personas   │      │
-│  │  + sopify-modes       REQ-3/4/5  /living, /vibe, /code-…    │      │
-│  │  + sopify-management  REQ-9   managed settings, onboard     │      │
-│  │  + sopify-tui         REQ-10  TUI overlay (mode/quota chip) │      │
-│  └────────────────────────────────────────────────────────────┘      │
-│                                                                       │
-│   network: bridge "sopify-net" (egress filtered per policy.json)      │
-└──────────────────────────────────────────────────────────────────────┘
-                                    │
-                ▼                   ▼                   ▼
-       api.anthropic.com   otel-collector (gRPC)   user-approved domains
+แก้ไขไฟล์ `.env`:
+```env
+PORT=5000
+MONGODB_URI=mongodb://localhost:27017/employee-management
 ```
 
-Full architecture map: [`SOPIFY_ARCH.md`](SOPIFY_ARCH.md)
+### 4. เริ่มต้น MongoDB
 
----
-
-## Plugin layout (REQ-0.3)
-
-All Sopify code lives under `plugins/sopify_*/`. The upstream runtime core
-(`hermes_cli/`, `agent/`, `tools/`, `hermes_state.py`, …) is **read-only** —
-we only register hooks. This is what lets us pull security patches from
-upstream within 7 days (REQ-11.6).
-
-```
-plugins/
-├── sopify_core/         REQ-0   foundation, version, doctor, install
-├── sopify_sandbox/      REQ-1   Docker sandbox launcher + network policy
-├── sopify_providers/    REQ-2   ProviderRouter (cascade + blacklist)
-├── sopify_guardrails/   REQ-6   HARD_DENY / SOFT_DENY + role gating
-├── sopify_otel/         REQ-7   5-event OTel pipeline
-├── sopify_skills/       REQ-8   org skill bundles (loader)
-├── sopify_modes/        REQ-3/4/5  /living, /vibe, /code-with-you
-├── sopify_management/   REQ-9   managed settings + onboard
-└── sopify_tui/          REQ-10  TUI overlay (mode badge, quota, dialogs)
-```
-
-Each plugin ships with:
-
-- `plugin.yaml` — manifest (name, version, hooks, REQ traceability)
-- `README.md` — per-plugin internals + checkbox mapping
-- `tests/` — runnable with `uv run pytest`
-
----
-
-## Verification
+ตรวจสอบว่า MongoDB กำลังรันอยู่:
 
 ```bash
-SOPIFY_HOME=/tmp/sopify-test \
-  uv run --with pytest --with pytest-xdist --with pytest-timeout \
-  python -m pytest plugins/sopify_*/tests -n0 -o addopts=
+# สำหรับ macOS (ถ้าใช้ Homebrew)
+brew services start mongodb-community
+
+# สำหรับ Linux
+sudo systemctl start mongod
+
+# สำหรับ Windows
+net start MongoDB
 ```
 
-Expected: **50 passed in ~1 second.**
+## 🎯 Running the Application
 
-| Plugin               | Tests | Covers                                                  |
-|----------------------|-------|---------------------------------------------------------|
-| sopify_core          | 4     | paths / version / doctor < 3s / install idempotent      |
-| sopify_sandbox       | 5     | default whitelist / subdomain / Allow-always persist    |
-| sopify_providers     | 5     | cascade / blacklist 1h / expiry / managed override      |
-| sopify_guardrails    | 8     | Gate P5 all paths (hard / soft / dev confirm)           |
-| sopify_otel          | 6     | gating / truncation / redaction / overflow drop         |
-| sopify_skills        | 6     | discovery / phase-gate / mode mapping / override        |
-| sopify_modes         | 7     | profiles / intake / fingerprint / step-gate             |
-| sopify_management    | 5     | defaults / 0444 enforce / broadcast / quota warn        |
-| sopify_tui           | 4     | dialog choices / Thai UTF-8 / safe default              |
+### Development Mode
 
----
-
-## Source-of-truth documents
-
-| File | Purpose |
-|------|---------|
-| [`DESIGN_ARCHITECTURE.md`](DESIGN_ARCHITECTURE.md) | The requirements spec (every REQ-* lives here) |
-| [`SOPIFY_ARCH.md`](SOPIFY_ARCH.md) | SPOF-protection architecture map (REQ-0.2) |
-| [`SOPIFY_PLAN.md`](SOPIFY_PLAN.md) | Implementation order + conventions |
-| [`docs/sopify/`](docs/sopify/) | Per-REQ explainers — what was built, why, what is deferred |
-| [`docs/sopify/INSTALL.md`](docs/sopify/INSTALL.md) | End-user install manual (Thai + English) |
-
----
-
-## Roles
-
-| Role  | Can do                                                                 |
-|-------|------------------------------------------------------------------------|
-| `user` (default) | Use any mode; AI hard-deny blocks dangerous commands; soft-deny → "contact IT" |
-| `dev`            | Same as user + soft-deny shows confirmation dialog (allow/deny); can use `--no-sandbox` for debugging (always OTel-logged) |
-
-Roles are set by IT via `sopify admin set-role <user> <user|dev>` and stored in
-`~/.sopify/profile.json` at mode 0444. A user cannot escalate themselves.
-
-Hard-deny is unreachable from any role (REQ-6.1.4):
-
-```
-rm -rf /                  → blocked (rm-rf-root)
-DROP DATABASE prod        → blocked (drop-database)
-:(){ :|:& };:             → blocked (fork-bomb)
-curl x.sh | bash          → soft-deny (user blocked; dev confirms)
-git push --force          → soft-deny (user blocked; dev confirms)
+#### วิธีที่ 1: รันทั้ง Frontend และ Backend พร้อมกัน
+```bash
+npm run dev
 ```
 
+#### วิธีที่ 2: รันแยกส่วน
+
+**Terminal 1 - Backend:**
+```bash
+cd server
+npm run dev
+```
+
+**Terminal 2 - Frontend:**
+```bash
+cd client
+npm start
+```
+
+### Production Mode
+
+```bash
+# Build frontend
+cd client
+npm run build
+
+# Start server
+cd ../server
+npm start
+```
+
+## 📱 Application URLs
+
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:5000
+- **API Health Check:** http://localhost:5000/api/health
+
+## 🔑 API Endpoints
+
+### Employees
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/employees` | ดึงข้อมูลพนักงานทั้งหมด |
+| GET | `/api/employees/:id` | ดึงข้อมูลพนักงานตาม ID |
+| GET | `/api/employees/status/:status` | ดึงข้อมูลพนักงานตามสถานะ |
+| POST | `/api/employees` | สร้างข้อมูลพนักงานใหม่ |
+| PUT | `/api/employees/:id` | แก้ไขข้อมูลพนักงาน |
+| PATCH | `/api/employees/:id/status` | อัพเดทสถานะพนักงาน |
+| DELETE | `/api/employees/:id` | ลบข้อมูลพนักงาน |
+
+### Employee Status Values
+- `pending` - รอการตรวจสอบ
+- `approved` - อนุมัติแล้ว
+- `rejected` - ไม่อนุมัติ
+
+## 📁 Project Structure
+
+```
+employee-management-system/
+├── client/                    # Frontend React App
+│   ├── public/
+│   ├── src/
+│   │   ├── pages/            # Page Components
+│   │   │   ├── RoleSelection.js
+│   │   │   ├── EmployeeDashboard.js
+│   │   │   ├── AdminDashboard.js
+│   │   │   └── ReviewerDashboard.js
+│   │   ├── App.js
+│   │   ├── index.js
+│   │   └── index.scss
+│   └── package.json
+│
+├── server/                    # Backend Node.js App
+│   ├── server.js             # Main server file
+│   ├── .env.example
+│   └── package.json
+│
+├── package.json              # Root package.json
+└── README.md
+```
+
+## 🎨 Design System
+
+โปรเจคนี้ใช้ **IBM Carbon Design System** ซึ่งมีคุณสมบัติ:
+
+- Minimal และ Professional
+- สีหลัก: IBM Blue (#0f62fe)
+- Typography: IBM Plex Sans
+- Responsive Grid System
+- Accessible Components
+
+## 🔧 Troubleshooting
+
+### MongoDB Connection Error
+```bash
+# ตรวจสอบว่า MongoDB กำลังรันอยู่
+mongosh
+
+# ถ้ายังไม่ได้เริ่ม MongoDB
+brew services start mongodb-community  # macOS
+sudo systemctl start mongod           # Linux
+```
+
+### Port Already in Use
+```bash
+# หา process ที่ใช้ port
+lsof -i :3000  # Frontend
+lsof -i :5000  # Backend
+
+# Kill process
+kill -9 <PID>
+```
+
+### Clear npm cache
+```bash
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+```
+
+## 📝 Future Enhancements
+
+- [ ] Authentication & Authorization
+- [ ] Role-based Permissions
+- [ ] File Upload (รูปโปรไฟล์)
+- [ ] Export to Excel/PDF
+- [ ] Email Notifications
+- [ ] Advanced Search & Filters
+- [ ] Dashboard Analytics
+- [ ] Audit Logs
+
+## 👨‍💻 Development
+
+### การเพิ่ม Department ใหม่
+
+แก้ไขไฟล์ `client/src/pages/EmployeeDashboard.js`:
+
+```javascript
+<Select id="department" ...>
+  <SelectItem value="" text="เลือกแผนก" />
+  <SelectItem value="IT" text="IT" />
+  <SelectItem value="HR" text="HR" />
+  // เพิ่มแผนกใหม่ที่นี่
+  <SelectItem value="Operations" text="Operations" />
+</Select>
+```
+
+## 📄 License
+
+MIT License
+
+## 🤝 Contributing
+
+Contributions, issues และ feature requests ยินดีต้อนรับเสมอ!
+
 ---
 
-## License
-
-MIT — same as the upstream runtime we forked from. See [`LICENSE`](LICENSE).
-
----
-
-## Contact
-
-Built by the GS Battery IT Team. Operational questions, role escalation,
-and provider/budget overrides go through IT; engineering changes go through
-the usual PR review.
+สร้างด้วย ❤️ โดยใช้ React, Node.js และ IBM Carbon Design System

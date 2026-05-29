@@ -1,5 +1,6 @@
 """Shared utility functions for hermes-agent."""
 
+import errno
 import json
 import logging
 import os
@@ -12,6 +13,11 @@ from urllib.parse import urlparse
 import yaml
 
 logger = logging.getLogger(__name__)
+
+# One-shot guard for the symlink-fallback warning in atomic_replace — keep
+# the log signal but don't spam every save (token refresh runs every few
+# minutes when an OAuth provider is in use).
+_symlink_fallback_warned: set[str] = set()
 
 
 TRUTHY_STRINGS = frozenset({"1", "true", "yes", "on"})
@@ -73,13 +79,40 @@ def atomic_replace(tmp_path: Union[str, Path], target: Union[str, Path]) -> str:
     and non-existent paths the behavior is identical to a plain
     ``os.replace`` call.
 
+    Fallback for the sandbox case: when ``target`` is a symlink that
+    points across filesystems or into a read-only mount (e.g. the Sopify
+    sbx sandbox symlinks ``$HOME/.hermes/auth.json`` to the host-mounted
+    ``~/.hermes/`` directory, which is bind-mounted read-only), the
+    cross-fs / ro write fails with EXDEV / EACCES / EROFS. We fall back to
+    replacing the symlink itself with the new file so the write succeeds
+    in the local (container) filesystem. The symlink is lost — callers
+    re-creating it at startup (sbx_launcher._link_hermes_into_sandbox)
+    will overwrite container-local changes on the next container boot,
+    which is the right trade-off vs. silent persistence failure.
+
     Returns the resolved real path used for the replace, so callers that
     need to re-apply permissions can target it instead of the symlink.
     """
     target_str = str(target)
-    real_path = os.path.realpath(target_str) if os.path.islink(target_str) else target_str
-    os.replace(str(tmp_path), real_path)
-    return real_path
+    is_link = os.path.islink(target_str)
+    real_path = os.path.realpath(target_str) if is_link else target_str
+    try:
+        os.replace(str(tmp_path), real_path)
+        return real_path
+    except OSError as exc:
+        if not is_link or exc.errno not in (errno.EXDEV, errno.EACCES, errno.EROFS):
+            raise
+        # Sandbox / read-only-mount fallback. Replace the symlink itself.
+        os.replace(str(tmp_path), target_str)
+        if target_str not in _symlink_fallback_warned:
+            _symlink_fallback_warned.add(target_str)
+            logger.warning(
+                "atomic_replace: symlink %s → %s could not be written (%s); "
+                "replaced the symlink with a local file. Changes will NOT "
+                "persist past the next container restart.",
+                target_str, real_path, exc,
+            )
+        return target_str
 
 
 def atomic_json_write(

@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
  * Locale markers use lipis/flag-icons (SVG sprites) instead of emoji so flags
  * render consistently across platforms.
  *
- * When placed at the bottom of the sidebar (next to ThemeSwitcher), pass
+ * When placed at the bottom of the sidebar, pass
  * `dropUp` so the list opens above the trigger and avoids clipping below the
  * viewport / overflow ancestors. Below the `sm` breakpoint, `dropUp` uses a
  * bottom sheet portaled to `document.body` instead of an anchored dropdown.

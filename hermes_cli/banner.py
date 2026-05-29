@@ -468,7 +468,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                          session_id: str = None,
                          get_toolset_for_tool=None,
                          context_length: int = None):
-    """Build and print a welcome banner with caduceus on left and info on right.
+    """
+    Build and print a welcome banner with caduceus on left and info on right.
 
     Args:
         console: Rich Console instance.
@@ -595,6 +596,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     if remaining_toolsets > 0:
         right_lines.append(f"[dim {dim}](and {remaining_toolsets} more toolsets...)[/]")
 
+
+
     # MCP Servers section (only if configured)
     try:
         from tools.mcp_tool import get_mcp_status
@@ -617,10 +620,14 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                     f"[red]— failed[/]"
                 )
 
+
+
     right_lines.append("")
     right_lines.append(f"[bold {accent}]Available Skills[/]")
     skills_by_category = get_available_skills()
     total_skills = sum(len(s) for s in skills_by_category.values())
+
+
 
     if skills_by_category:
         for category in sorted(skills_by_category.keys()):

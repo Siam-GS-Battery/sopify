@@ -68,7 +68,7 @@ export const af: Translations = {
     },
     nav: {
       analytics: "Analise",
-      chat: "Klets",
+      chat: "Terminal",
       config: "Konfigurasie",
       cron: "Cron",
       documentation: "Dokumentasie",

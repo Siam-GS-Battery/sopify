@@ -170,7 +170,9 @@ youtube = [
   "youtube-transcript-api==1.2.4",
 ]
 # `hermes dashboard` (localhost SPA + API).  Not in core to keep the default install lean.
-web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0"]
+# python-multipart is required by FastAPI's `request.form()` parser, used by
+# /api/files/upload. Without it the upload endpoint raises at request time.
+web = ["fastapi==0.133.1", "uvicorn[standard]==0.41.0", "python-multipart>=0.0.20"]
 all = [
   # Policy (2026-05-12): `[all]` includes only extras that genuinely
   # CAN'T be lazy-installed via `tools/lazy_deps.py` — i.e. things every

@@ -18,6 +18,7 @@ import {
   Activity,
   BarChart3,
   BookOpen,
+  Briefcase,
   Clock,
   Code,
   Cpu,
@@ -25,17 +26,21 @@ import {
   Download,
   Eye,
   FileText,
+  Folder,
   Globe,
   Heart,
   KeyRound,
   Menu,
   MessageSquare,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
   Puzzle,
   RotateCw,
   Settings,
   Shield,
   Sparkles,
+  Wand2,
   Star,
   Terminal,
   Users,
@@ -58,6 +63,7 @@ import type { SystemAction } from "@/contexts/system-actions-context";
 import ConfigPage from "@/pages/ConfigPage";
 import DocsPage from "@/pages/DocsPage";
 import EnvPage from "@/pages/EnvPage";
+import FilesPage from "@/pages/FilesPage";
 import SessionsPage from "@/pages/SessionsPage";
 import LogsPage from "@/pages/LogsPage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
@@ -68,8 +74,10 @@ import ProfilesPage from "@/pages/ProfilesPage";
 import SkillsPage from "@/pages/SkillsPage";
 import PluginsPage from "@/pages/PluginsPage";
 import ChatPage from "@/pages/ChatPage";
+import PanelPage from "@/pages/PanelPage";
+import VibeCodePage from "@/pages/VibeCodePage";
+import VirtualOfficePage from "@/pages/VirtualOfficePage";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
-import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { useI18n } from "@/i18n";
 import type { Translations } from "@/i18n/types";
 import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
@@ -93,7 +101,7 @@ function UnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
 const CHAT_NAV_ITEM: NavItem = {
   path: "/chat",
   labelKey: "chat",
-  label: "Chat",
+  label: "Terminal",
   icon: Terminal,
 };
 
@@ -108,7 +116,11 @@ const CHAT_NAV_ITEM: NavItem = {
  */
 const BUILTIN_ROUTES_CORE: Record<string, ComponentType> = {
   "/": RootRedirect,
+  "/vibe-code": VibeCodePage,
+  "/panel": PanelPage,
   "/sessions": SessionsPage,
+  "/files": FilesPage,
+  "/virtual-office": VirtualOfficePage,
   "/analytics": AnalyticsPage,
   "/models": ModelsPage,
   "/logs": LogsPage,
@@ -132,10 +144,30 @@ function ChatRouteSink() {
 
 const BUILTIN_NAV_REST: NavItem[] = [
   {
+    path: "/vibe-code",
+    label: "Vibe Code",
+    icon: Wand2,
+  },
+  {
+    path: "/virtual-office",
+    label: "Virtual Office",
+    icon: Briefcase,
+  },
+  {
+    path: "/panel",
+    label: "Panel",
+    icon: Sparkles,
+  },
+  {
     path: "/sessions",
     labelKey: "sessions",
     label: "Sessions",
     icon: MessageSquare,
+  },
+  {
+    path: "/files",
+    label: "Files",
+    icon: Folder,
   },
   {
     path: "/analytics",
@@ -229,20 +261,61 @@ function buildNavItems(
   return items;
 }
 
-/** Split merged nav into built-in sidebar entries vs plugin tabs, preserving plugin order hints. */
+/**
+ * Sidebar is split into two user-facing groups, separated by a divider:
+ *
+ *   • Everyday  — features a normal user reaches for day-to-day.
+ *   • Configure — power-user / IT surface for wiring, secrets, automation.
+ *
+ * The lists below are the authoritative ordering. Any nav item (built-in or
+ * plugin) whose path isn't in either list falls through to the end of the
+ * Configure group, so a newly installed plugin still shows up by default.
+ *
+ * Plugins listed here (e.g. /kanban) take priority over their manifest
+ * `position` hint — explicit order wins. Hidden plugins are skipped
+ * upstream in buildNavItems and never reach this partition.
+ */
+const EVERYDAY_NAV_ORDER: readonly string[] = [
+  "/vibe-code", // flagship AI-DLC entry — see SPECIFICATION_ADD_ON_FLOW.md.
+  "/virtual-office",
+  "/panel",
+  "/sessions",
+  "/files",
+  "/analytics", // gated by dashboard.show_token_analytics; absent when off.
+];
+const CONFIGURE_NAV_ORDER: readonly string[] = [
+  "/chat", // Terminal
+  "/network",
+  "/models",
+  "/logs",
+  "/skills",
+  "/plugins",
+  "/profiles",
+  "/config",
+  "/env", // Keys
+  "/kanban",
+  "/cron",
+];
+
 function partitionSidebarNav(
   builtIn: NavItem[],
   manifests: PluginManifest[],
-): { coreItems: NavItem[]; pluginItems: NavItem[] } {
+): { everyday: NavItem[]; configure: NavItem[] } {
   const merged = buildNavItems(builtIn, manifests);
-  const builtinPaths = new Set(builtIn.map((i) => i.path));
-  const coreItems: NavItem[] = [];
-  const pluginItems: NavItem[] = [];
-  for (const item of merged) {
-    if (builtinPaths.has(item.path)) coreItems.push(item);
-    else pluginItems.push(item);
-  }
-  return { coreItems, pluginItems };
+  const byPath = new Map(merged.map((i) => [i.path, i]));
+  const pick = (paths: readonly string[]) =>
+    paths
+      .map((p) => byPath.get(p))
+      .filter((i): i is NavItem => Boolean(i));
+  const known = new Set<string>([
+    ...EVERYDAY_NAV_ORDER,
+    ...CONFIGURE_NAV_ORDER,
+  ]);
+  const leftover = merged.filter((i) => !known.has(i.path));
+  return {
+    everyday: pick(EVERYDAY_NAV_ORDER),
+    configure: [...pick(CONFIGURE_NAV_ORDER), ...leftover],
+  };
 }
 
 function buildRoutes(
@@ -315,9 +388,34 @@ export default function App() {
   const { theme } = useTheme();
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeMobile = useCallback(() => setMobileOpen(false), []);
+
+  // Desktop-only "collapse to icon rail" toggle. Persisted so the choice
+  // survives reloads. The collapsed state is applied purely via `lg:`
+  // classes below, so the mobile drawer always renders full-width with
+  // labels regardless of this value.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("sopify:sidebarCollapsed") === "1";
+  });
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem("sopify:sidebarCollapsed", next ? "1" : "0");
+      } catch {
+        // localStorage may be unavailable (private mode / blocked) — ignore.
+      }
+      return next;
+    });
+  }, []);
   const isDocsRoute = pathname === "/docs" || pathname === "/docs/";
   const normalizedPath = pathname.replace(/\/$/, "") || "/";
   const isChatRoute = normalizedPath === "/chat";
+  const isPanelRoute = normalizedPath === "/panel";
+  // Vibe Code's project view is a panel-style layout with an internal
+  // scrolling chat — it must be height-constrained like /chat and /panel
+  // so the chat thread scrolls in place instead of pushing the page down.
+  const isVibeCodeRoute = normalizedPath === "/vibe-code";
   const embeddedChat = isDashboardEmbeddedChatEnabled();
 
   // `dashboard.show_token_analytics` gates the Analytics nav item.  The
@@ -366,10 +464,21 @@ export default function App() {
   );
 
   const builtinNav = useMemo(() => {
+    // Order within this list doesn't matter — partitionSidebarNav reorders
+    // by EVERYDAY_NAV_ORDER / CONFIGURE_NAV_ORDER. We just need every item
+    // present in the merged set.
+    //
+    // /docs is hidden from the sidebar (route stays mounted in
+    // BUILTIN_ROUTES_CORE so deep links still resolve). /analytics is gated
+    // by the dashboard.show_token_analytics config flag.
     const base = embeddedChat
-      ? [CHAT_NAV_ITEM, ...BUILTIN_NAV_REST]
+      ? [...BUILTIN_NAV_REST, CHAT_NAV_ITEM]
       : BUILTIN_NAV_REST;
-    return showTokenAnalytics ? base : base.filter((n) => n.path !== "/analytics");
+    return base.filter(
+      (n) =>
+        n.path !== "/docs" &&
+        (showTokenAnalytics || n.path !== "/analytics"),
+    );
   }, [embeddedChat, showTokenAnalytics]);
 
   const sidebarNav = useMemo(
@@ -484,6 +593,8 @@ export default function App() {
               "transition-transform duration-200 ease-out",
               mobileOpen ? "translate-x-0" : "-translate-x-full",
               "lg:sticky lg:top-0 lg:translate-x-0 lg:shrink-0",
+              "lg:transition-[width] lg:duration-200 lg:ease-out",
+              collapsed ? "lg:w-16" : "lg:w-64",
             )}
             style={{
               background: "var(--component-sidebar-background)",
@@ -495,9 +606,15 @@ export default function App() {
               className={cn(
                 "flex h-14 shrink-0 items-center justify-between gap-2 px-4",
                 "border-b border-current/20",
+                collapsed && "lg:justify-center lg:px-0",
               )}
             >
-              <div className="flex items-center gap-2">
+              <div
+                className={cn(
+                  "flex items-center gap-2",
+                  collapsed && "lg:hidden",
+                )}
+              >
                 <PluginSlot name="header-left" />
 
                 <img
@@ -514,21 +631,40 @@ export default function App() {
                 />
                 <Typography
                   className="font-bold text-[1.125rem] leading-[0.95] tracking-[0.0525rem]"
-                  style={{ color: "#1D63ED" }}
+                  style={{ color: "#00349dff" }}
                 >
-                  SOPIFY
+                  Sopify AI
                 </Typography>
               </div>
 
-              <Button
-                ghost
-                size="icon"
-                onClick={closeMobile}
-                aria-label={t.app.closeNavigation}
-                className="lg:hidden text-midground/70 hover:text-midground"
-              >
-                <X />
-              </Button>
+              <div className="flex items-center gap-1">
+                {/* Desktop-only collapse/expand toggle. */}
+                <Button
+                  ghost
+                  size="icon"
+                  onClick={toggleCollapsed}
+                  aria-label={
+                    collapsed
+                      ? (t.app.expandNavigation ?? "Expand sidebar")
+                      : (t.app.collapseNavigation ?? "Collapse sidebar")
+                  }
+                  aria-expanded={!collapsed}
+                  aria-controls="app-sidebar"
+                  className="hidden lg:inline-flex text-midground/70 hover:text-midground"
+                >
+                  {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                </Button>
+
+                <Button
+                  ghost
+                  size="icon"
+                  onClick={closeMobile}
+                  aria-label={t.app.closeNavigation}
+                  className="lg:hidden text-midground/70 hover:text-midground"
+                >
+                  <X />
+                </Button>
+              </div>
             </div>
 
             <nav
@@ -536,9 +672,10 @@ export default function App() {
               aria-label={t.app.navigation}
             >
               <ul className="flex flex-col">
-                {sidebarNav.coreItems.map((item) => (
+                {sidebarNav.everyday.map((item) => (
                   <SidebarNavLink
                     closeMobile={closeMobile}
+                    collapsed={collapsed}
                     item={item}
                     key={item.path}
                     t={t}
@@ -546,53 +683,47 @@ export default function App() {
                 ))}
               </ul>
 
-              {sidebarNav.pluginItems.length > 0 && (
-                <div
-                  aria-labelledby="hermes-sidebar-plugin-nav-heading"
-                  className="flex flex-col border-t border-current/10 pb-2"
+              {sidebarNav.configure.length > 0 && (
+                <ul
                   role="group"
+                  aria-label={t.app.configureNavSection ?? "Configure"}
+                  className="flex flex-col border-t border-current/20 mt-2 pt-2"
                 >
-                  <span
-                    className={cn(
-                      "px-5 pt-2.5 pb-1",
-                      "font-mondwest text-[0.6rem] tracking-[0.15em] uppercase opacity-30",
-                    )}
-                    id="hermes-sidebar-plugin-nav-heading"
-                  >
-                    {t.app.pluginNavSection}
-                  </span>
-
-                  <ul className="flex flex-col">
-                    {sidebarNav.pluginItems.map((item) => (
-                      <SidebarNavLink
-                        closeMobile={closeMobile}
-                        item={item}
-                        key={item.path}
-                        t={t}
-                      />
-                    ))}
-                  </ul>
-                </div>
+                  {sidebarNav.configure.map((item) => (
+                    <SidebarNavLink
+                      closeMobile={closeMobile}
+                      collapsed={collapsed}
+                      item={item}
+                      key={item.path}
+                      t={t}
+                    />
+                  ))}
+                </ul>
               )}
             </nav>
 
-            <SidebarSystemActions onNavigate={closeMobile} />
+            <SidebarSystemActions collapsed={collapsed} onNavigate={closeMobile} />
 
             <div
               className={cn(
                 "flex shrink-0 items-center justify-between gap-2",
                 "px-3 py-2",
                 "border-t border-current/20",
+                collapsed && "lg:justify-center lg:px-1",
               )}
             >
-              <div className="flex min-w-0 items-center gap-2">
+              <div
+                className={cn(
+                  "flex min-w-0 items-center gap-2",
+                  collapsed && "lg:flex-col lg:gap-1",
+                )}
+              >
                 <PluginSlot name="header-right" />
-                <ThemeSwitcher dropUp />
                 <LanguageSwitcher dropUp />
               </div>
             </div>
 
-            <SidebarFooter />
+            <SidebarFooter collapsed={collapsed} />
           </aside>
 
           <PageHeaderProvider pluginTabs={pluginTabMeta}>
@@ -600,7 +731,7 @@ export default function App() {
               className={cn(
                 "relative z-2 flex min-w-0 min-h-0 flex-1 flex-col",
                 "px-3 sm:px-6",
-                isChatRoute
+                isChatRoute || isPanelRoute || isVibeCodeRoute
                   ? "pb-0 pt-1 sm:pt-2 lg:pt-4"
                   : "pt-2 sm:pt-4 lg:pt-6",
                 isDocsRoute && "min-h-0 flex-1",
@@ -611,8 +742,13 @@ export default function App() {
                 className={cn(
                   "w-full min-w-0",
                   !isChatRoute &&
+                    !isPanelRoute &&
+                    !isVibeCodeRoute &&
                     "pb-[calc(2rem+env(safe-area-inset-bottom,0px))] lg:pb-8",
-                  (isDocsRoute || isChatRoute) &&
+                  (isDocsRoute ||
+                    isChatRoute ||
+                    isPanelRoute ||
+                    isVibeCodeRoute) &&
                     "min-h-0 flex flex-1 flex-col",
                 )}
               >
@@ -667,7 +803,7 @@ export default function App() {
   );
 }
 
-function SidebarNavLink({ closeMobile, item, t }: SidebarNavLinkProps) {
+function SidebarNavLink({ closeMobile, collapsed, item, t }: SidebarNavLinkProps) {
   const { path, label, labelKey, icon: Icon } = item;
 
   const navLabel = labelKey
@@ -680,6 +816,7 @@ function SidebarNavLink({ closeMobile, item, t }: SidebarNavLinkProps) {
         to={path}
         end={path === "/sessions"}
         onClick={closeMobile}
+        title={collapsed ? navLabel : undefined}
         className={({ isActive }) =>
           cn(
             "group relative flex items-center gap-3",
@@ -688,6 +825,7 @@ function SidebarNavLink({ closeMobile, item, t }: SidebarNavLinkProps) {
             "whitespace-nowrap transition-colors cursor-pointer",
             "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-midground",
             isActive ? "text-midground" : "opacity-60 hover:opacity-100",
+            collapsed && "lg:justify-center lg:gap-0 lg:px-0",
           )
         }
         style={{
@@ -697,7 +835,9 @@ function SidebarNavLink({ closeMobile, item, t }: SidebarNavLinkProps) {
         {({ isActive }) => (
           <>
             <Icon className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">{navLabel}</span>
+            <span className={cn("truncate", collapsed && "lg:hidden")}>
+              {navLabel}
+            </span>
 
             <span
               aria-hidden
@@ -718,7 +858,13 @@ function SidebarNavLink({ closeMobile, item, t }: SidebarNavLinkProps) {
   );
 }
 
-function SidebarSystemActions({ onNavigate }: { onNavigate: () => void }) {
+function SidebarSystemActions({
+  collapsed,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  onNavigate: () => void;
+}) {
   const { t } = useI18n();
   const navigate = useNavigate();
   const { activeAction, isBusy, isRunning, pendingAction, runAction } =
@@ -760,12 +906,13 @@ function SidebarSystemActions({ onNavigate }: { onNavigate: () => void }) {
         className={cn(
           "px-5 pt-0.5 pb-0.5",
           "font-mondwest text-[0.6rem] tracking-[0.15em] uppercase opacity-30",
+          collapsed && "lg:hidden",
         )}
       >
         {t.app.system}
       </span>
 
-      <SidebarStatusStrip />
+      <SidebarStatusStrip collapsed={collapsed} />
 
       <ul className="flex flex-col">
         {items.map(({ action, icon: Icon, label, runningLabel, spin }) => {
@@ -783,6 +930,7 @@ function SidebarSystemActions({ onNavigate }: { onNavigate: () => void }) {
                 disabled={disabled}
                 aria-busy={busy}
                 active={busy}
+                title={collapsed ? displayLabel : undefined}
                 className={cn(
                   "gap-3 px-5 py-1.5 whitespace-nowrap",
                   "font-mondwest text-[0.75rem] tracking-[0.1em]",
@@ -791,6 +939,7 @@ function SidebarSystemActions({ onNavigate }: { onNavigate: () => void }) {
                     ? "text-midground opacity-100"
                     : "opacity-60 hover:opacity-100",
                   "disabled:opacity-30",
+                  collapsed && "lg:justify-center lg:gap-0 lg:px-0",
                 )}
               >
                 {isPending ? (
@@ -806,7 +955,9 @@ function SidebarSystemActions({ onNavigate }: { onNavigate: () => void }) {
                   />
                 )}
 
-                <span className="truncate">{displayLabel}</span>
+                <span className={cn("truncate", collapsed && "lg:hidden")}>
+                  {displayLabel}
+                </span>
 
                 <span
                   aria-hidden
@@ -838,6 +989,7 @@ interface NavItem {
 
 interface SidebarNavLinkProps {
   closeMobile: () => void;
+  collapsed: boolean;
   item: NavItem;
   t: Translations;
 }
