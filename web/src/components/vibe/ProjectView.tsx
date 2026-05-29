@@ -62,7 +62,7 @@ function phaseToStepKey(phase: VibePhase): VibeStepKey {
 const PROJECT_DONE_KEYS: VibeStepKey[] = ["name", "theme", "addons"];
 
 export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
-  const { project, requirements_md, design_md } = data;
+  const { project, requirements_md, design_md, database_md, api_md } = data;
 
   const stepperKey = phaseToStepKey(project.phase);
   const doneKeys = useMemo<VibeStepKey[]>(() => {
@@ -105,8 +105,16 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
               onRefresh={onRefresh}
             />
           )}
-          {(project.phase === "backend" ||
-            project.phase === "improvement" ||
+          {project.phase === "backend" && (
+            <BackendPane
+              project={project}
+              initialDatabase={database_md ?? ""}
+              initialApi={api_md ?? ""}
+              onUpdated={onUpdated}
+              onRefresh={onRefresh}
+            />
+          )}
+          {(project.phase === "improvement" ||
             project.phase === "security" ||
             project.phase === "approve") && (
             <BuildingPane project={project} />
@@ -702,6 +710,382 @@ function DesignPane({
           </Button>
           <span className="text-[0.7rem] text-muted-foreground/60">
             Click through the preview iframe. Approve when the mockup feels right.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Backend ─────────────────────────────────────────────────────────────────
+
+/**
+ * Backend is the schema + API + frontend-wiring phase. The pane mirrors
+ * DesignPane's chat + split layout, but the right side hosts three tabs
+ * (DATABASE.md / API.md / Preview) instead of a bare iframe — the user
+ * needs to read what the agent designed before the schema lands, then
+ * see API.md once it's written, then verify the wired app in the iframe.
+ *
+ * Both markdown files are polled every 4 s and a tab's badge flips to
+ * "drafted" the moment the agent writes the file.
+ */
+const BACKEND_KICKOFF_PROMPT =
+  "DESIGN.md is approved. We're now in the BACKEND phase.\n\n" +
+  "Step 1 — DATA SHAPE REVIEW (before doing anything destructive): write " +
+  "DATABASE.md at the project root with a table list, a mermaid ER diagram, " +
+  "per-table column lists (name / type / nullable / default), RLS posture, " +
+  "and the open questions you need me to decide. Surface trade-offs in chat " +
+  "(naming, denormalisation, soft vs hard delete, who owns which relation). " +
+  "Do NOT run the supabase CLI or write SQL files yet.\n\n" +
+  "Step 2 — STAND UP THE DATA LAYER (after I signal the schema looks right): " +
+  "write migrations under supabase/migrations/, apply them via `supabase db " +
+  "push`, generate TS types, add a supabase client, wire the service layer, " +
+  "and replace placeholder data in the frontend with real fetches. Keep the " +
+  "design 1:1 with what was approved. Write API.md summarising endpoints + " +
+  "auth posture + error contract.\n\n" +
+  "Bind any dev server to --host 0.0.0.0 so the Live preview iframe can reach " +
+  "it. Tell me when DATABASE.md is reviewable, and again when the app is " +
+  "wired end-to-end so I can approve to Improvement.";
+
+type BackendTab = "database" | "api" | "preview";
+
+function BackendPane({
+  project,
+  initialDatabase,
+  initialApi,
+  onUpdated,
+  onRefresh,
+}: {
+  project: VibeProjectMarker;
+  initialDatabase: string;
+  initialApi: string;
+  onUpdated: (m: VibeProjectMarker) => void;
+  onRefresh: () => void;
+}) {
+  const [databaseContent, setDatabaseContent] = useState(initialDatabase);
+  const [apiContent, setApiContent] = useState(initialApi);
+  const [devServers, setDevServers] = useState<
+    { port: number; url: string }[]
+  >([]);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [activeTab, setActiveTab] = useState<BackendTab>("database");
+  const [err, setErr] = useState<string | null>(null);
+  const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
+
+  // Poll for DATABASE.md + API.md updates.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      api
+        .getVibeProject(project.name)
+        .then((r) => {
+          if (cancelled) return;
+          setDatabaseContent(r.database_md ?? "");
+          setApiContent(r.api_md ?? "");
+        })
+        .catch(() => {
+          /* quiet — keep prior content */
+        });
+    };
+    const id = window.setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [project.name]);
+
+  const currentServer = devServers[0];
+  const previewSrc = useMemo(
+    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
+    [currentServer, reloadKey],
+  );
+
+  // Resizable split — same wiring as DesignPane / BuildingPane.
+  const isStacked = useBelowBreakpoint(1024);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const [chatPct, setChatPct] = useState<number>(() => {
+    if (typeof window === "undefined") return SPLIT_DEFAULT;
+    const raw = Number(window.localStorage.getItem(SPLIT_STORAGE_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampSplit(raw) : SPLIT_DEFAULT;
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SPLIT_STORAGE_KEY,
+        String(Math.round(chatPct)),
+      );
+    } catch {
+      /* localStorage unavailable — ignore. */
+    }
+  }, [chatPct]);
+
+  const updateFromClientX = useCallback((clientX: number) => {
+    const el = splitRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0) return;
+    setChatPct(clampSplit(((clientX - rect.left) / rect.width) * 100));
+  }, []);
+  const onDividerPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      draggingRef.current = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [],
+  );
+  const onDividerPointerMove = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      updateFromClientX(e.clientX);
+    },
+    [updateFromClientX],
+  );
+  const onDividerPointerUp = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+    },
+    [],
+  );
+  const onDividerKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setChatPct((p) => clampSplit(p - 2));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setChatPct((p) => clampSplit(p + 2));
+      } else if (e.key === "Home" || e.key === "End") {
+        e.preventDefault();
+        setChatPct(SPLIT_DEFAULT);
+      }
+    },
+    [],
+  );
+  const resetSplit = useCallback(() => setChatPct(SPLIT_DEFAULT), []);
+  const chatStyle = isStacked
+    ? undefined
+    : { flexGrow: chatPct, flexBasis: 0 };
+  const sideStyle = isStacked
+    ? undefined
+    : { flexGrow: 100 - chatPct, flexBasis: 0 };
+
+  const onApprove = useCallback(async () => {
+    setAdvancing("approve");
+    setErr(null);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        phase: "improvement",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvancing(null);
+    }
+  }, [project.name, onUpdated, onRefresh]);
+
+  const onReject = useCallback(async () => {
+    setAdvancing("reject");
+    setErr(null);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        phase: "design",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdvancing(null);
+    }
+  }, [project.name, onUpdated, onRefresh]);
+
+  const hasDatabase = databaseContent.trim().length > 0;
+  const hasApi = apiContent.trim().length > 0;
+
+  const tabs: { key: BackendTab; label: string; ready: boolean }[] = [
+    { key: "database", label: "DATABASE.md", ready: hasDatabase },
+    { key: "api", label: "API.md", ready: hasApi },
+    { key: "preview", label: "Preview", ready: Boolean(previewSrc) },
+  ];
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div
+        ref={splitRef}
+        className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row lg:gap-0"
+      >
+        <div
+          style={chatStyle}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+        >
+          <ChatPanel
+            project={project}
+            header="Backend"
+            kickoff={BACKEND_KICKOFF_PROMPT}
+            onDevServersChange={setDevServers}
+          />
+        </div>
+
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize chat and artifact panes"
+          aria-valuemin={SPLIT_MIN}
+          aria-valuemax={SPLIT_MAX}
+          aria-valuenow={Math.round(chatPct)}
+          tabIndex={0}
+          onPointerDown={onDividerPointerDown}
+          onPointerMove={onDividerPointerMove}
+          onPointerUp={onDividerPointerUp}
+          onKeyDown={onDividerKeyDown}
+          onDoubleClick={resetSplit}
+          className={cn(
+            "group hidden shrink-0 cursor-col-resize touch-none items-stretch lg:flex",
+            "mx-1 w-1.5 select-none focus-visible:outline-none",
+          )}
+          title="Drag to resize · double-click to reset"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "m-auto h-10 w-1 rounded-full bg-border/70 transition-colors",
+              "group-hover:bg-midground/60 group-focus-visible:bg-midground/80",
+            )}
+          />
+        </div>
+
+        <aside
+          style={sideStyle}
+          className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/60 bg-background-base/40 lg:flex-1"
+          aria-label="Backend artifacts"
+        >
+          <header className="flex h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3">
+            <div
+              role="tablist"
+              aria-label="Backend artifact tabs"
+              className="flex items-center gap-1"
+            >
+              {tabs.map((t) => (
+                <button
+                  key={t.key}
+                  role="tab"
+                  aria-selected={activeTab === t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[0.7rem] font-semibold uppercase tracking-wider transition-colors",
+                    activeTab === t.key
+                      ? "bg-midground/10 text-midground"
+                      : "text-muted-foreground/70 hover:text-midground",
+                  )}
+                >
+                  <span>{t.label}</span>
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "inline-block h-1.5 w-1.5 rounded-full",
+                      t.ready ? "bg-emerald-500" : "bg-muted-foreground/30",
+                    )}
+                  />
+                </button>
+              ))}
+            </div>
+            {activeTab === "preview" && previewSrc && (
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
+                  {currentServer?.url}
+                </span>
+                <Button
+                  ghost
+                  size="icon"
+                  aria-label="Reload preview"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
+          </header>
+
+          {activeTab === "database" && (
+            <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs leading-relaxed text-midground">
+              {hasDatabase
+                ? databaseContent
+                : "(empty — the agent will write DATABASE.md once it has reviewed the design and decided on the schema.)"}
+            </pre>
+          )}
+          {activeTab === "api" && (
+            <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-4 py-3 font-mono text-xs leading-relaxed text-midground">
+              {hasApi
+                ? apiContent
+                : "(empty — the agent will write API.md once the schema is approved and endpoints are wired.)"}
+            </pre>
+          )}
+          {activeTab === "preview" &&
+            (previewSrc ? (
+              <iframe
+                key={previewSrc}
+                src={previewSrc}
+                title={`${project.name} preview`}
+                className="min-h-0 flex-1 border-0"
+                sandbox="allow-scripts allow-forms allow-popups allow-modals allow-same-origin"
+              />
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-xs text-muted-foreground/70">
+                No dev server detected yet. Once the agent runs the dev
+                server with <code>--host 0.0.0.0</code>, it will appear here.
+              </div>
+            ))}
+        </aside>
+      </div>
+
+      <div className="shrink-0 flex flex-col gap-2 rounded-lg border border-border/60 bg-background-base/40 px-4 py-3">
+        {err && (
+          <div className="flex items-start gap-2 text-xs text-destructive">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="break-words">{err}</span>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge tone={hasDatabase && hasApi ? "success" : "secondary"}>
+            {hasDatabase && hasApi
+              ? "DATABASE.md + API.md drafted"
+              : hasDatabase
+                ? "DATABASE.md drafted, API.md pending"
+                : "awaiting agent"}
+          </Badge>
+          <Button
+            onClick={onApprove}
+            disabled={advancing !== null}
+            className="gap-2"
+          >
+            {advancing === "approve" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Check className="h-4 w-4" />
+            )}
+            <span>Approve → Improvement</span>
+          </Button>
+          <Button
+            ghost
+            onClick={onReject}
+            disabled={advancing !== null}
+            className="gap-2"
+          >
+            {advancing === "reject" ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ArrowLeft className="h-4 w-4" />
+            )}
+            <span>Back to Design</span>
+          </Button>
+          <span className="text-[0.7rem] text-muted-foreground/60">
+            Approve when the schema, API, and frontend wiring all look right.
           </span>
         </div>
       </div>
