@@ -723,7 +723,11 @@ def _start_agent_build(sid: str, session: dict) -> None:
         try:
             tokens = _set_session_context(key)
             try:
-                agent = _make_agent(sid, key)
+                # PR-004 — pick up the Vibe Code per-phase model lock if the
+                # frontend bound a project to this session. Falls back to the
+                # global default when no project is bound.
+                vibe_model = _resolve_vibe_model_for_session(current)
+                agent = _make_agent(sid, key, vibe_model=vibe_model)
             finally:
                 _clear_session_context(tokens)
 
@@ -969,7 +973,22 @@ def _resolve_startup_runtime() -> tuple[str, str | None]:
     ).strip()
     if not explicit_model:
         return model, None
+    return _detect_runtime_for_model(explicit_model, fallback=model)
 
+
+def _detect_runtime_for_model(
+    target_model: str, fallback: str | None = None
+) -> tuple[str, str | None]:
+    """Resolve ``(model, provider)`` for an explicit model string.
+
+    Mirrors ``_resolve_startup_runtime``'s detection path so the Vibe Code
+    per-phase override (PR-004) routes to the correct provider catalog. On
+    detection failure, returns ``(target_model, None)`` (or ``(fallback, None)``
+    when callers want to fall back to the env-driven default).
+    """
+    model = target_model.strip()
+    if not model:
+        return (fallback or "", None)
     try:
         from hermes_cli.models import detect_static_provider_for_model
 
@@ -983,13 +1002,39 @@ def _resolve_startup_runtime() -> tuple[str, str | None]:
             or os.environ.get("HERMES_INFERENCE_PROVIDER", "").strip().lower()
             or "auto"
         )
-        detected = detect_static_provider_for_model(explicit_model, current_provider)
+        detected = detect_static_provider_for_model(model, current_provider)
         if detected:
             provider, detected_model = detected
             return detected_model, provider
     except Exception:
         pass
     return model, None
+
+
+def _resolve_vibe_model_for_session(session: dict | None) -> str | None:
+    """Return the Vibe Code per-phase model lock for a session, if any.
+
+    The session dict stores the project name under ``vibe_project`` (set by
+    ``session.create`` / ``session.resume`` when called from the Vibe Code
+    page). This helper looks up the project marker on disk and resolves the
+    model for its current phase. Returns ``None`` when no project is bound
+    or the marker is unreadable — callers fall back to the env-driven
+    default in that case.
+    """
+    if not session:
+        return None
+    name = session.get("vibe_project")
+    if not name:
+        return None
+    try:
+        from hermes_cli.vibe_models import read_vibe_marker, resolve_vibe_phase_model
+
+        marker = read_vibe_marker(str(name))
+        if not marker:
+            return None
+        return resolve_vibe_phase_model(marker)
+    except Exception:
+        return None
 
 
 def _write_config_key(key_path: str, value):
@@ -2055,7 +2100,12 @@ def _reset_session_agent(sid: str, session: dict) -> dict:
     return info
 
 
-def _make_agent(sid: str, key: str, session_id: str | None = None):
+def _make_agent(
+    sid: str,
+    key: str,
+    session_id: str | None = None,
+    vibe_model: str | None = None,
+):
     from run_agent import AIAgent
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
@@ -2076,7 +2126,13 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
             system_prompt = "\n\n".join(
                 part for part in (system_prompt, skills_prompt) if part
             ).strip()
-    model, requested_provider = _resolve_startup_runtime()
+    # PR-004 — Vibe Code locks a per-phase model on the project. When the
+    # caller supplies one, override the env-driven default and re-detect
+    # the matching provider so the AIAgent talks to the right endpoint.
+    if vibe_model:
+        model, requested_provider = _detect_runtime_for_model(vibe_model)
+    else:
+        model, requested_provider = _resolve_startup_runtime()
     runtime = resolve_runtime_provider(
         requested=requested_provider,
         target_model=model or None,
@@ -2296,6 +2352,13 @@ def _(rid, params: dict) -> dict:
     cols = int(params.get("cols", 80))
     _enable_gateway_prompts()
 
+    # PR-004 — optional Vibe Code project binding. When set, the deferred
+    # agent build resolves the marker's per-phase model and pins it on this
+    # session. Invalid / unbound projects are stored as-is; resolution
+    # failures fall through to the env-driven default at build time.
+    vibe_project = params.get("vibe_project")
+    vibe_project = vibe_project.strip() if isinstance(vibe_project, str) else None
+
     ready = threading.Event()
 
     _sessions[sid] = {
@@ -2317,6 +2380,7 @@ def _(rid, params: dict) -> dict:
         "tool_progress_mode": _load_tool_progress_mode(),
         "tool_started_at": {},
         "transport": current_transport() or _stdio_transport,
+        "vibe_project": vibe_project or None,
     }
 
     # Return the lightweight session immediately so Ink can paint the composer
@@ -2337,6 +2401,12 @@ def _(rid, params: dict) -> dict:
     # other session's dev servers are paused. See dev_server_manager.py.
     _set_active_session_for_sid(sid)
 
+    # The lightweight response model is "the model the agent WILL run with"
+    # so the dashboard can render the active SKU immediately, before the
+    # deferred build flips ``session.info``. Vibe Code projects win over
+    # the env-driven default.
+    initial_model = _resolve_vibe_model_for_session(_sessions[sid]) or _resolve_model()
+
     return _ok(
         rid,
         {
@@ -2348,7 +2418,7 @@ def _(rid, params: dict) -> dict:
             # session.resume to actually rehydrate the conversation.
             "session_key": key,
             "info": {
-                "model": _resolve_model(),
+                "model": initial_model,
                 "tools": {},
                 "skills": {},
                 "cwd": os.getenv("TERMINAL_CWD", os.getcwd()),
@@ -2466,6 +2536,17 @@ def _(rid, params: dict) -> dict:
             return _err(rid, 4007, "session not found")
     sid = uuid.uuid4().hex[:8]
     _enable_gateway_prompts()
+    # PR-004 — propagate the Vibe Code project lock across reloads so a
+    # resumed chat keeps using the project's per-phase model. Resolved
+    # against the current marker phase on disk, not whatever was active
+    # when the session was first created.
+    vibe_project = params.get("vibe_project")
+    vibe_project = vibe_project.strip() if isinstance(vibe_project, str) else None
+    vibe_model = (
+        _resolve_vibe_model_for_session({"vibe_project": vibe_project})
+        if vibe_project
+        else None
+    )
     try:
         db.reopen_session(target)
         history = db.get_messages_as_conversation(target)
@@ -2475,10 +2556,12 @@ def _(rid, params: dict) -> dict:
         messages = _history_to_messages(display_history)
         tokens = _set_session_context(target)
         try:
-            agent = _make_agent(sid, target, session_id=target)
+            agent = _make_agent(sid, target, session_id=target, vibe_model=vibe_model)
         finally:
             _clear_session_context(tokens)
         _init_session(sid, target, agent, history, cols=int(params.get("cols", 80)))
+        if vibe_project:
+            _sessions[sid]["vibe_project"] = vibe_project
     except Exception as e:
         return _err(rid, 5000, f"resume failed: {e}")
 

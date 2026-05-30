@@ -139,7 +139,16 @@ function messagesToTurns(msgs: ResumeMessage[]): Turn[] {
   return turns;
 }
 
-export function useChatStream(resumeId?: string | null): UseChatStream {
+export function useChatStream(
+  resumeId?: string | null,
+  /**
+   * Vibe Code project name (slug under ~/.hermes/vibe-projects/). When
+   * provided, the gateway pins the agent to the project's per-phase model
+   * lock on session.create / session.resume. Omit (or null) on Panel,
+   * which uses the env-driven default model.
+   */
+  vibeProject?: string | null,
+): UseChatStream {
   const gwRef = useRef<GatewayClient | null>(null);
   if (gwRef.current === null) gwRef.current = new GatewayClient();
   const gw = gwRef.current;
@@ -358,12 +367,17 @@ export function useChatStream(resumeId?: string | null): UseChatStream {
         if (cancelled) return;
         if (resumeId) {
           // Resume adopts a fresh sid and replays the stored transcript.
+          // vibe_project is forwarded so the gateway re-locks the agent to
+          // the project's current per-phase model.
           return gw
             .request<{
               session_id: string;
               session_key?: string;
               messages?: ResumeMessage[];
-            }>("session.resume", { session_id: resumeId })
+            }>("session.resume", {
+              session_id: resumeId,
+              ...(vibeProject ? { vibe_project: vibeProject } : {}),
+            })
             .then((res) => {
               if (cancelled || !res?.session_id) return;
               setSessionId(res.session_id);
@@ -378,7 +392,7 @@ export function useChatStream(resumeId?: string | null): UseChatStream {
         return gw
           .request<{ session_id: string; session_key?: string }>(
             "session.create",
-            {},
+            vibeProject ? { vibe_project: vibeProject } : {},
           )
           .then((created) => {
             if (cancelled || !created?.session_id) return;
@@ -408,7 +422,7 @@ export function useChatStream(resumeId?: string | null): UseChatStream {
       offDevServer();
       gw.close();
     };
-  }, [gw, upsertAssistant, resumeId]);
+  }, [gw, upsertAssistant, resumeId, vibeProject]);
 
   const send = useCallback(
     (text: string) => {
