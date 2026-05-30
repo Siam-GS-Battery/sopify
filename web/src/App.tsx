@@ -34,7 +34,6 @@ import {
   MessageSquare,
   Package,
   PanelLeftClose,
-  PanelLeftOpen,
   Puzzle,
   RotateCw,
   Settings,
@@ -639,7 +638,14 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-1">
-                {/* Desktop-only collapse/expand toggle. */}
+                {/* Desktop-only collapse/expand toggle. When collapsed the
+                 * sidebar shrinks to ~64px and the brand strip above is
+                 * hidden — so the toggle button doubles as the only branded
+                 * mark visible in that state. Render the Sopify icon
+                 * (same asset the brand strip uses) instead of the generic
+                 * PanelLeftOpen chevron. When expanded the brand strip is
+                 * already on screen, so the toggle reverts to the standard
+                 * close chevron. */}
                 <Button
                   ghost
                   size="icon"
@@ -653,7 +659,18 @@ export default function App() {
                   aria-controls="app-sidebar"
                   className="hidden lg:inline-flex text-midground/70 hover:text-midground"
                 >
-                  {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+                  {collapsed ? (
+                    <img
+                      src="/sopify-icon.png"
+                      alt=""
+                      aria-hidden
+                      className="block h-6 w-6 select-none"
+                      style={{ imageRendering: "pixelated" }}
+                      draggable={false}
+                    />
+                  ) : (
+                    <PanelLeftClose />
+                  )}
                 </Button>
 
                 <Button
