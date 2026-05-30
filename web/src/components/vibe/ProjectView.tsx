@@ -16,6 +16,7 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { Typography } from "@/components/NouiTypography";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { Composer } from "@/components/chat/Composer";
+import { SecurityChecklist } from "@/components/vibe/SecurityChecklist";
 import {
   UI_STEP_TO_BACKEND_PHASE,
   VIBE_STEPS,
@@ -1586,9 +1587,16 @@ function SecurityPane({
             </p>
           </div>
         ) : hasReport ? (
-          <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words px-6 py-4 font-mono text-xs leading-relaxed text-midground">
-            {report}
-          </pre>
+          // PR-010 — render findings as a checklist so the user can tick
+          // off addressed items. Falls back to raw markdown inside the
+          // component when the parser can't recognise the report.
+          <div className="min-h-0 flex-1 overflow-hidden px-3 py-3">
+            <SecurityChecklist
+              project={project}
+              report={report}
+              onMarkerUpdate={onUpdated}
+            />
+          </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-6 py-12 text-center">
             <p className="max-w-md text-sm text-muted-foreground">
