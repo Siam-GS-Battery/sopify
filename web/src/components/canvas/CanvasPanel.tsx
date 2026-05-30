@@ -37,6 +37,7 @@ export function CanvasPanel({
   sessionId,
   autoOpenLive = true,
   persistModeKey,
+  onModeChange,
 }: {
   canvas: UseCanvasPreview;
   onSelectElement: (sel: CanvasSelection) => void;
