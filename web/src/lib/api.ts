@@ -573,7 +573,26 @@ export const api = {
         body: JSON.stringify({ phase, model }),
       },
     ),
+  /**
+   * PR-008 — kill every registered dev-server spec on a given port
+   * (across all sessions) + best-effort SIGTERM of an orphan listener.
+   * Used by Panel on Static→Live transition so the fixed port 5173
+   * doesn't bleed stale state into a freshly-opened preview.
+   */
+  killDevServerPort: (port: number) =>
+    fetchJSON<KillPortResponse>("/api/dev-server/kill-port", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ port }),
+    }),
 };
+
+export interface KillPortResponse {
+  port: number;
+  stopped: Array<{ port: number; session_key: string; status: string }>;
+  orphan_killed: boolean;
+  still_listening: boolean;
+}
 
 export interface VibeExample {
   name: string;

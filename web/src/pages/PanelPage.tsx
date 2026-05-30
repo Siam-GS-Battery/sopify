@@ -17,6 +17,7 @@ import { Composer } from "@/components/chat/Composer";
 import { useBelowBreakpoint } from "@/hooks/useBelowBreakpoint";
 import { useCanvasPreview } from "@/hooks/useCanvasPreview";
 import { useChatStream } from "@/hooks/useChatStream";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PANEL_DEV_PORT, pickDevServerForPort } from "@/lib/vibe-ports";
 
@@ -85,6 +86,18 @@ export default function PanelPage() {
   });
   const onSelectElement = useCallback((sel: CanvasSelection) => {
     setPrefill((p) => ({ text: formatSelection(sel), key: p.key + 1 }));
+  }, []);
+
+  // PR-008 — every time Panel resolves to Live mode (Static→Live click or
+  // mount-time restore), kill anything on the fixed port so the preview
+  // never serves stale state from a prior session. Idempotent on the
+  // backend; failure is silent so the iframe still loads if a stale
+  // server happens to be the right thing anyway.
+  const onPanelModeChange = useCallback((next: "static" | "live") => {
+    if (next !== "live") return;
+    api.killDevServerPort(PANEL_DEV_PORT).catch(() => {
+      /* quiet — best-effort cleanup */
+    });
   }, []);
 
   // ── Resizable split between chat (left) and canvas (right) ──
@@ -260,6 +273,9 @@ export default function PanelPage() {
           // and resume, the persisted mode brings them back in Live.
           autoOpenLive={false}
           persistModeKey={PANEL_PREVIEW_MODE_KEY}
+          // PR-008 — kill 5173 on every Static→Live transition so the
+          // preview always starts from a clean port.
+          onModeChange={onPanelModeChange}
         />
       </aside>
     </div>

@@ -6046,6 +6046,25 @@ class _StopServerBody(BaseModel):
     port: int
 
 
+class _KillPortBody(BaseModel):
+    port: int
+
+
+@app.post("/api/dev-server/kill-port")
+async def dev_server_kill_port(body: _KillPortBody, request: Request):
+    """Kill every registered spec on ``port`` (any session) + best-effort
+    SIGTERM of an orphan listener if nothing's registered.
+
+    PR-008 — the Panel preview is fixed to port 5173 and the Panel UI
+    calls this on every Static→Live transition so a stale runtime from a
+    prior session can't bleed through. Idempotent. See
+    ``dev_server_manager.stop_servers_on_port`` for the response shape.
+    """
+    _require_token(request)
+    from hermes_cli import dev_server_manager as _dsm
+    return _dsm.stop_servers_on_port(int(body.port))
+
+
 @app.post("/api/dev-server/stop")
 async def dev_server_stop(body: _StopServerBody, request: Request):
     """Manual kill button — pause one specific server without changing
