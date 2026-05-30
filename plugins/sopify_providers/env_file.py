@@ -16,6 +16,7 @@ REQ-11.2          — never log values; only names + lengths.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Iterable
@@ -92,6 +93,22 @@ def set_keys(updates: dict[str, str], *, strip: Iterable[str] = ()) -> bool:
         p.chmod(0o600)
     except Exception:
         pass
+
+    # Mirror the change into the current process's environment so callers
+    # in the same process (notably the long-running `hermes dashboard` /
+    # `sopify dashboard` server) see the new value without a restart. The
+    # microVM's slash_workers spawn fresh and read ~/.hermes/.env at boot,
+    # so they already pick up changes — but the dashboard process itself
+    # had been a stale-env hole when the user saved a key mid-session and
+    # then tried to use it via Panel / `/api/ws`.
+    for var, value in updates.items():
+        if value == "":
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = value
+    for var in strip_set:
+        os.environ.pop(var, None)
+
     logger.info("sopify-providers: wrote %d keys to %s",
                 len([v for v in updates.values() if v]), p)
     return True
