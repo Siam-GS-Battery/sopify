@@ -18,8 +18,10 @@ import { useBelowBreakpoint } from "@/hooks/useBelowBreakpoint";
 import { useCanvasPreview } from "@/hooks/useCanvasPreview";
 import { useChatStream } from "@/hooks/useChatStream";
 import { cn } from "@/lib/utils";
+import { PANEL_DEV_PORT, pickDevServerForPort } from "@/lib/vibe-ports";
 
 const SPLIT_STORAGE_KEY = "sopify:panelChatPct";
+const PANEL_PREVIEW_MODE_KEY = "sopify:panelPreviewMode";
 const SPLIT_DEFAULT = 58;
 // Min chat-pane share — kept low enough that the chat can collapse to a
 // narrow rail (~15%) when the user wants the preview to take most of the
@@ -69,9 +71,11 @@ export default function PanelPage() {
     interrupt,
   } = useChatStream(resumeId);
   const canvas = useCanvasPreview(turns);
-  // First server detected for this chat session — fed to the Canvas so
-  // Live mode auto-fills its URL without polling /api/preview-server.
-  const detectedDevUrl = devServers[0]?.url ?? null;
+  // PR-006 — Panel right pane is locked to the fixed port. Other 517x
+  // servers the gateway detects still show up in `devServers`, but the
+  // Canvas only ever points its iframe at 5173. Null when 5173 isn't up.
+  const detectedDevUrl =
+    pickDevServerForPort(devServers, PANEL_DEV_PORT)?.url ?? null;
 
   // Selected-element context injected into the composer. `key` bumps per
   // selection so picking the same element twice re-injects the block.
@@ -251,6 +255,11 @@ export default function PanelPage() {
           onSelectElement={onSelectElement}
           detectedDevUrl={detectedDevUrl}
           sessionId={sessionId}
+          // PR-006 — first Panel load is chat-only; user explicitly clicks
+          // the Live toggle to open the preview. If they did so previously
+          // and resume, the persisted mode brings them back in Live.
+          autoOpenLive={false}
+          persistModeKey={PANEL_PREVIEW_MODE_KEY}
         />
       </aside>
     </div>

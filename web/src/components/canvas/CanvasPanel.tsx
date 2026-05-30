@@ -35,6 +35,8 @@ export function CanvasPanel({
   onSelectElement,
   detectedDevUrl,
   sessionId,
+  autoOpenLive = true,
+  persistModeKey,
 }: {
   canvas: UseCanvasPreview;
   onSelectElement: (sel: CanvasSelection) => void;
@@ -48,9 +50,34 @@ export function CanvasPanel({
    * unless its port collides with the new session's). Start/Stop buttons
    * are disabled while this is null. */
   sessionId: string | null;
+  /** When false, suppress the auto-flip to Live mode on first dev URL
+   * detection. The Panel uses this (per spec/VIBE_CODE_PANEL_SPEC.md §4 —
+   * "Panel preview is NOT auto-opened") so the user explicitly clicks
+   * Live to see localhost:5173. Defaults to true for Vibe Code surfaces. */
+  autoOpenLive?: boolean;
+  /** localStorage key for persisting the Static/Live mode choice. When
+   * set, the panel restores the last selected mode on mount. Used by
+   * Panel so a resumed session with Live mode previously open re-enters
+   * Live without waiting for `detectedDevUrl`. */
+  persistModeKey?: string;
 }) {
   const { path, setPath, version, reload, hasPreview } = canvas;
-  const [mode, setMode] = useState<Mode>("static");
+  const [mode, setMode] = useState<Mode>(() => {
+    if (persistModeKey && typeof window !== "undefined") {
+      const stored = window.localStorage.getItem(persistModeKey);
+      if (stored === "live" || stored === "static") return stored;
+    }
+    return "static";
+  });
+  // Persist mode whenever the user (or auto-switch) changes it.
+  useEffect(() => {
+    if (!persistModeKey || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(persistModeKey, mode);
+    } catch {
+      /* localStorage unavailable — ignore. */
+    }
+  }, [mode, persistModeKey]);
   const [draft, setDraft] = useState(path);
   const [liveUrl, setLiveUrl] = useState(DEFAULT_LIVE_URL);
   const [liveDraft, setLiveDraft] = useState(DEFAULT_LIVE_URL);
@@ -71,13 +98,16 @@ export function CanvasPanel({
 
   // Auto-switch to Live mode the first time a dev server URL is detected
   // for this session, so the user doesn't have to flip the toggle manually.
+  // Suppressed on the Panel surface (autoOpenLive=false) per
+  // spec/VIBE_CODE_PANEL_SPEC.md §4 — the user must explicitly open Live.
   const switchedToLiveRef = useRef(false);
   useEffect(() => {
+    if (!autoOpenLive) return;
     if (detectedDevUrl && !switchedToLiveRef.current) {
       switchedToLiveRef.current = true;
       setMode("live");
     }
-  }, [detectedDevUrl]);
+  }, [detectedDevUrl, autoOpenLive]);
 
   // Clicking an element completes one selection — drop out of Select mode so
   // the user can immediately interact with the page (and the composer) again.
