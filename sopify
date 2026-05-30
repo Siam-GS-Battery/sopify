@@ -288,14 +288,16 @@ def _cmd_dashboard(argv: list[str]) -> int:
     # Publish 9119 (dashboard) + common dev-server ports so the Vibe Code
     # "Live preview" iframe can reach whatever the agent spins up without
     # asking the user to manually expose ports:
-    #   5173/4173  Vite (dev / preview)
+    #   5173       Vite (Panel — fixed per VIBE_CODE_PANEL_SPEC §4)
+    #   5174       Vite (Vibe Code — fixed per VIBE_CODE_PANEL_SPEC §4)
+    #   4173       Vite preview
     #   3000       Next.js / CRA / Express
     #   4321       Astro
     #   8000/8080  Generic Python/Java dev servers
     # All bind to 127.0.0.1 on the host so nothing leaks to the LAN.
     return _delegate_to_hermes(
         hermes_args,
-        publish_ports=[9119, 5173, 4173, 3000, 4321, 8000, 8080],
+        publish_ports=[9119, 5173, 5174, 4173, 3000, 4321, 8000, 8080],
     )
 
 
