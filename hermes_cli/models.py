@@ -397,24 +397,31 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "google/gemini-3-pro-preview",
         "google/gemini-3-flash-preview",
     ],
-    # Alibaba DashScope Coding platform (coding-intl) — default endpoint.
-    # Supports Qwen models + third-party providers (GLM, Kimi, MiniMax).
-    # Users with classic DashScope keys should override DASHSCOPE_BASE_URL
-    # to https://dashscope-intl.aliyuncs.com/compatible-mode/v1 (OpenAI-compat)
-    # or https://dashscope-intl.aliyuncs.com/apps/anthropic (Anthropic-compat).
+    # Alibaba Model Studio (DashScope International, Singapore) —
+    # OpenAI-compatible endpoint at
+    # dashscope-intl.aliyuncs.com/compatible-mode/v1. This is the
+    # default Qwen Cloud surface most users get when they sign up at
+    # modelstudio.console.alibabacloud.com. Keys may use the legacy
+    # `sk-` form or workspace-scoped `sk-ws-` form. Serves the Qwen
+    # family + a handful of third-party models Alibaba hosts on the
+    # same platform (Kimi, GLM, MiniMax via DashScope's marketplace).
     "alibaba": [
         "qwen3.6-plus",
         "kimi-k2.5",
         "qwen3.5-plus",
         "qwen3-coder-plus",
         "qwen3-coder-next",
-        # Third-party models available on coding-intl
+        # Third-party models Alibaba hosts on the same Model Studio platform
         "glm-5",
         "glm-4.7",
         "MiniMax-M2.5",
     ],
-    # Alibaba Coding Plan — same platform as alibaba (DashScope coding-intl),
-    # separate provider ID with its own base_url_env_var.
+    # Alibaba Coding Plan — a SEPARATE Alibaba subscription product with
+    # its own endpoint (coding-intl.dashscope.aliyuncs.com/v1). A regular
+    # Model Studio key does NOT work here — see auth.py where the
+    # DASHSCOPE_API_KEY fallback was deliberately removed to stop the
+    # picker from routing shared models (qwen3.5-plus etc.) here on
+    # Model Studio keys and 401-ing on the first request.
     "alibaba-coding-plan": [
         "qwen3.6-plus",
         "qwen3.5-plus",

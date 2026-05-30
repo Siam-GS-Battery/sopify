@@ -335,7 +335,19 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         name="Alibaba Cloud (Coding Plan)",
         auth_type="api_key",
         inference_base_url="https://coding-intl.dashscope.aliyuncs.com/v1",
-        api_key_env_vars=("ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY"),
+        # NOTE: NO `DASHSCOPE_API_KEY` fallback here on purpose. The Coding
+        # Plan is a SEPARATE Alibaba subscription with its own dedicated key
+        # — keys issued for Model Studio (the standard Qwen Cloud product
+        # at modelstudio.console.alibabacloud.com) are NOT valid against
+        # coding-intl.dashscope.aliyuncs.com. The previous fallback to
+        # `DASHSCOPE_API_KEY` made `alibaba-coding-plan` look "available"
+        # to every Model Studio user, so the picker happily routed shared
+        # models (qwen3.5-plus, qwen3-coder-plus, qwen3.6-plus) through
+        # this provider and the user got a 401 on the first call. Users
+        # who DO subscribe to the Coding Plan must set
+        # ALIBABA_CODING_PLAN_API_KEY explicitly to opt in — that's the
+        # signal that the key actually works on this endpoint.
+        api_key_env_vars=("ALIBABA_CODING_PLAN_API_KEY",),
         base_url_env_var="ALIBABA_CODING_PLAN_BASE_URL",
     ),
     "minimax-cn": ProviderConfig(
