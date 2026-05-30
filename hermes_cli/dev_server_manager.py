@@ -539,6 +539,48 @@ def stop_server(session_key: str, port: int) -> bool:
     return False
 
 
+def stop_servers_on_port(port: int) -> dict:
+    """Kill ANY spec listening on ``port``, across all sessions.
+
+    PR-008 — the Panel preview locks port 5173; when the user opens Live
+    mode the UI calls this so a stale runtime from a prior session can't
+    serve into the new preview. Idempotent: returns the list of specs
+    that were paused (may be empty when nothing was registered on the
+    port). Best-effort kill of an orphan listener (no spec, but the port
+    is bound) is reported via ``orphan_killed`` so callers can log it.
+    """
+    stopped: list[dict] = []
+    with _registry_lock:
+        for specs in _registry.values():
+            for s in specs:
+                if s.port == port and s.status == "running":
+                    _pause_spec(s)
+                    stopped.append(_spec_to_dict(s))
+
+    # Orphan: the port is still listening but isn't in our registry. Best-
+    # effort PID lookup + SIGTERM so the new Live mode gets a clean port.
+    orphan_killed = False
+    if is_port_listening(port):
+        pid = find_pid_for_port(port)
+        if pid is not None:
+            pgid = find_pgid(pid)
+            try:
+                if pgid is not None:
+                    kill_process_group(pgid)
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                orphan_killed = True
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    return {
+        "port": port,
+        "stopped": stopped,
+        "orphan_killed": orphan_killed,
+        "still_listening": is_port_listening(port),
+    }
+
+
 def _refresh_status(session_key: str) -> None:
     """Cheap probe — if a spec marked running has no listener, downgrade."""
     with _registry_lock:

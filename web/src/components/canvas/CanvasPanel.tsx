@@ -60,6 +60,11 @@ export function CanvasPanel({
    * Panel so a resumed session with Live mode previously open re-enters
    * Live without waiting for `detectedDevUrl`. */
   persistModeKey?: string;
+  /** Fires whenever the mode resolves (initial mount + every subsequent
+   * change). Used by Panel (PR-008) to kill any stale dev server on its
+   * fixed port the moment Live mode is opened, so the preview always
+   * starts from a clean slate. */
+  onModeChange?: (mode: Mode) => void;
 }) {
   const { path, setPath, version, reload, hasPreview } = canvas;
   const [mode, setMode] = useState<Mode>(() => {
@@ -78,6 +83,12 @@ export function CanvasPanel({
       /* localStorage unavailable — ignore. */
     }
   }, [mode, persistModeKey]);
+
+  // Notify parents of the active mode (mount + every change). Panel uses
+  // this to kill its fixed port the moment Live opens — see PR-008.
+  useEffect(() => {
+    onModeChange?.(mode);
+  }, [mode, onModeChange]);
   const [draft, setDraft] = useState(path);
   const [liveUrl, setLiveUrl] = useState(DEFAULT_LIVE_URL);
   const [liveDraft, setLiveDraft] = useState(DEFAULT_LIVE_URL);
