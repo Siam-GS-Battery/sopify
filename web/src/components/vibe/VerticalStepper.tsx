@@ -102,9 +102,7 @@ export function VerticalStepper({ steps, currentKey, doneKeys }: Props) {
 }
 
 export const VIBE_STEP_KEYS = [
-  "name",
-  "theme",
-  "addons",
+  "setup",
   "brainstorm",
   "design",
   "backend",
@@ -116,9 +114,11 @@ export const VIBE_STEP_KEYS = [
 export type VibeStepKey = (typeof VIBE_STEP_KEYS)[number];
 
 export const VIBE_STEPS: readonly StepperItem[] = [
-  { key: "name", title: "Create project", description: "Pick a folder name." },
-  { key: "theme", title: "Theme", description: "Choose a starting example." },
-  { key: "addons", title: "Add-ons", description: "Toggle optional features." },
+  {
+    key: "setup",
+    title: "Create project",
+    description: "Name, theme, add-ons, and optional context uploads.",
+  },
   { key: "brainstorm", title: "Brainstorm", description: "Define requirements with the agent." },
   { key: "design", title: "Design", description: "Frontend mockup with frontend-design skill." },
   { key: "backend", title: "Backend & Database", description: "Schema, API, and frontend wiring." },

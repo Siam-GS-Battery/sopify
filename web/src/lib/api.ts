@@ -548,6 +548,18 @@ export const api = {
       `/api/vibe/projects/${encodeURIComponent(name)}`,
       { method: "DELETE" },
     ),
+  uploadVibeFiles: (name: string, files: File[]) => {
+    const fd = new FormData();
+    files.forEach((f, i) => fd.append(`file-${i}`, f, f.name));
+    return fetchJSON<VibeUploadResponse>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/uploads`,
+      { method: "POST", body: fd },
+    );
+  },
+  listVibeUploads: (name: string) =>
+    fetchJSON<VibeUploadListResponse>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/uploads`,
+    ),
 };
 
 export interface VibeExample {
@@ -608,6 +620,20 @@ export interface VibeProjectCreateResponse {
   name: string;
   path: string;
   project: VibeProjectMarker;
+}
+
+export interface VibeUploadEntry {
+  name: string;
+  size: number;
+}
+
+export interface VibeUploadResponse {
+  ok: boolean;
+  uploaded: VibeUploadEntry[];
+}
+
+export interface VibeUploadListResponse {
+  files: VibeUploadEntry[];
 }
 
 export interface FileEntry {
