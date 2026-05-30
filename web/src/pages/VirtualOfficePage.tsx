@@ -126,17 +126,24 @@ function AgentMascot({
   size = 56,
   color = "#1D63ED",
   working = false,
+  floatIndex = 0,
+  float = true,
 }: {
   size?: number;
   color?: string;
   working?: boolean;
+  /** Stagger offset so a row of mascots doesn't float in unison. */
+  floatIndex?: number;
+  /** Skip the float animation (e.g. tiny avatars inside the side panel). */
+  float?: boolean;
 }) {
+  // Each mascot floats with a staggered phase. Working agents float a
+  // little faster so the difference reads at a glance.
+  const duration = working ? 2.2 : 3.4;
+  const delay = (floatIndex % 5) * 0.35;
   return (
     <div
-      className={cn(
-        "relative flex flex-col items-center select-none pointer-events-none",
-        working && "animate-[mascot-bob_1.2s_ease-in-out_infinite]",
-      )}
+      className="relative flex flex-col items-center select-none pointer-events-none"
       style={{ width: size }}
       aria-hidden="true"
     >
@@ -149,8 +156,11 @@ function AgentMascot({
         style={{
           imageRendering: "pixelated",
           filter: working
-            ? `drop-shadow(0 2px 0 rgba(0,0,0,0.35)) drop-shadow(0 0 8px ${color})`
-            : "drop-shadow(0 2px 0 rgba(0,0,0,0.35))",
+            ? `drop-shadow(0 4px 4px rgba(0,0,0,0.35)) drop-shadow(0 0 8px ${color})`
+            : "drop-shadow(0 4px 4px rgba(0,0,0,0.35))",
+          animation: float
+            ? `mascot-float ${duration}s ease-in-out ${delay}s infinite`
+            : undefined,
         }}
       />
       <div
@@ -160,6 +170,9 @@ function AgentMascot({
           height: 5,
           background: "radial-gradient(closest-side, rgba(0,0,0,0.45), transparent)",
           filter: "blur(0.5px)",
+          animation: float
+            ? `mascot-shadow ${duration}s ease-in-out ${delay}s infinite`
+            : undefined,
         }}
       />
     </div>
@@ -293,6 +306,7 @@ function VirtualOfficeScene({ agents }: { agents: Agent[] }) {
                     size={i % 2 === 1 ? 48 : 56}
                     color={a.color}
                     working={a.status === "working"}
+                    floatIndex={i}
                   />
                 </div>
               );
@@ -319,7 +333,7 @@ function AgentInfoPanel({ agents }: { agents: Agent[] }) {
       <CardHeader className="flex flex-row items-center justify-between gap-2 normal-case">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-muted-foreground" />
-          <CardTitle className="text-base">Agent Information</CardTitle>
+          <CardTitle className="text-base">Spawned Sub-Agents</CardTitle>
         </div>
         <Badge tone="secondary" className="text-[10px]">
           {agents.length}
@@ -328,7 +342,8 @@ function AgentInfoPanel({ agents }: { agents: Agent[] }) {
       <CardContent className="p-0">
         {agents.length === 0 ? (
           <div className="px-4 py-8 text-center text-xs text-muted-foreground normal-case">
-            No agents yet. Sessions started in the harness will appear here.
+            No sub-agents yet. They appear here when an orchestrator session
+            calls the delegate tool.
           </div>
         ) : (
           <ul className="divide-y divide-border">
@@ -345,6 +360,7 @@ function AgentInfoPanel({ agents }: { agents: Agent[] }) {
                     size={32}
                     color={a.color}
                     working={a.status === "working"}
+                    float={false}
                   />
                 </div>
                 <div className="min-w-0 flex-1">
@@ -679,9 +695,17 @@ export default function VirtualOfficePage() {
     return () => clearInterval(id);
   }, []);
 
+  // "Agents on the floor" = spawned sub-agents, not top-level sessions.
+  // In the harness, `delegate_tool` creates child sessions with
+  // `parent_session_id` pointing back at the orchestrator session — see
+  // tools/delegate_tool.py:1129. Filtering on that field gives us the real
+  // sub-agent fan-out (and excludes compaction-fork siblings, which we
+  // don't want to render as separate agents).
   const agents = useMemo<Agent[]>(() => {
     void tick;
-    return sessions.map(sessionToAgent);
+    return sessions
+      .filter((s) => Boolean(s.parent_session_id))
+      .map(sessionToAgent);
   }, [sessions, tick]);
 
   const activeAgents = agents.filter((a) => a.status === "working").length;
@@ -829,12 +853,18 @@ export default function VirtualOfficePage() {
       {/* Models used summary spans full width below. */}
       <ModelsUsedPanel models={models} />
 
-      {/* Keyframe used by AgentMascot when an agent is "working". */}
+      {/* Float keyframes used by AgentMascot. The mascot lifts a few px
+       * while its ground shadow tightens — together it reads as a gentle
+       * hover above the office floor. */}
       <style>
         {`
-        @keyframes mascot-bob {
+        @keyframes mascot-float {
           0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-5px); }
+          50%     { transform: translateY(-8px); }
+        }
+        @keyframes mascot-shadow {
+          0%, 100% { transform: scale(1);    opacity: 1; }
+          50%     { transform: scale(0.78); opacity: 0.55; }
         }
         `}
       </style>
