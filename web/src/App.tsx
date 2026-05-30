@@ -631,7 +631,7 @@ export default function App() {
                 <img
                   src="/sopify-icon.png"
                   alt="Sopify AI"
-                  className="block h-7 w-auto select-none"
+                  className="block h-12 w-auto select-none"
                   style={{ imageRendering: "pixelated" }}
                   draggable={false}
                 />
@@ -664,7 +664,7 @@ export default function App() {
                       src="/sopify-icon.png"
                       alt=""
                       aria-hidden
-                      className="block h-6 w-6 select-none"
+                      className="block h-12 w-12 select-none"
                       style={{ imageRendering: "pixelated" }}
                       draggable={false}
                     />
