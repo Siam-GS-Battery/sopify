@@ -431,12 +431,30 @@ def _ensure_dev_server_init() -> None:
     try:
         from hermes_cli import dev_server_manager as _dsm
         _dsm.set_detect_callback(_emit_dev_server_to_session)
+        # PR-007 — register a project lookup so the poller can attribute
+        # background runtimes to the right Vibe Code project.
+        _dsm.set_project_lookup_callback(_vibe_project_for_session_key)
         _dsm.start_poller(interval=2.0)
         _dev_server_init_done = True
     except Exception as e:
         _log.debug("dev_server_manager init skipped: %s", e)
         # Mark done anyway so we don't re-attempt on every RPC
         _dev_server_init_done = True
+
+
+def _vibe_project_for_session_key(session_key: str) -> str | None:
+    """Reverse-lookup: which Vibe Code project (if any) owns a session_key.
+
+    Scans the live _sessions table. None when no live session matches or
+    the session isn't bound to a Vibe project (Panel chat).
+    """
+    if not session_key:
+        return None
+    for s in _sessions.values():
+        if s.get("session_key") == session_key:
+            project = s.get("vibe_project")
+            return project if isinstance(project, str) and project else None
+    return None
 
 
 def _set_active_session_for_sid(sid: str) -> None:
@@ -516,9 +534,19 @@ def _detect_dev_server_from_tool(
     # Try to extract command + cwd from the tool args for revive.
     cmd_hint = _extract_command_hint(tool_name, args)
     cwd_hint = _extract_cwd_hint(tool_name, args)
+    # PR-007 — propagate the Vibe Code project binding so the runtime
+    # registry can group servers by project for /api/vibe/runtimes. None
+    # for Panel / non-Vibe sessions.
+    session = _sessions.get(sid)
+    vibe_project = session.get("vibe_project") if session else None
     try:
         spec = _dsm.register_detected_url(
-            key, port, url, command_hint=cmd_hint, cwd_hint=cwd_hint
+            key,
+            port,
+            url,
+            command_hint=cmd_hint,
+            cwd_hint=cwd_hint,
+            vibe_project=vibe_project,
         )
     except Exception as e:
         _log.warning("register_detected_url failed: %s", e)
