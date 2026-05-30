@@ -1,5 +1,6 @@
 import { Badge } from "@nous-research/ui/ui/components/badge";
-import { AlertCircle } from "lucide-react";
+import { Button } from "@nous-research/ui/ui/components/button";
+import { AlertCircle, MessageCirclePlus } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -23,6 +24,22 @@ import { PANEL_DEV_PORT, pickDevServerForPort } from "@/lib/vibe-ports";
 
 const SPLIT_STORAGE_KEY = "sopify:panelChatPct";
 const PANEL_PREVIEW_MODE_KEY = "sopify:panelPreviewMode";
+// PR-009 — durable Panel session key so reloads rehydrate the chat
+// instead of starting fresh. Single global key (Panel has one session
+// at a time). Vibe Code uses project.json:session_id on disk instead —
+// the per-project marker survives browser cache clears + cross-device
+// access, so we don't mirror to localStorage there.
+const PANEL_SESSION_STORAGE_KEY = "sopify:panelSessionId";
+
+function readStoredPanelSession(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const v = window.localStorage.getItem(PANEL_SESSION_STORAGE_KEY);
+    return v && v.trim() ? v : null;
+  } catch {
+    return null;
+  }
+}
 const SPLIT_DEFAULT = 58;
 // Min chat-pane share — kept low enough that the chat can collapse to a
 // narrow rail (~15%) when the user wants the preview to take most of the
@@ -60,17 +77,50 @@ function formatSelection(sel: CanvasSelection): string {
  */
 export default function PanelPage() {
   const [searchParams] = useSearchParams();
-  const resumeId = searchParams.get("resume");
+  // PR-009 — resume priority is URL ?resume= > localStorage > fresh.
+  // Read once on mount (not via state-setter callback) so the resume target
+  // stays stable across renders; `useChatStream` only refetches when the
+  // captured resumeId actually changes. URLSearchParams.get returns "" for
+  // a bare `?resume=` so we coerce empty to null before falling back.
+  const initialResumeId = useRef<string | null>(
+    (searchParams.get("resume") || null) ?? readStoredPanelSession(),
+  ).current;
   const {
     state,
     sessionId,
+    sessionKey,
     turns,
     devServers,
     busy,
     error,
     send,
     interrupt,
-  } = useChatStream(resumeId);
+  } = useChatStream(initialResumeId);
+
+  // Persist whatever session_key the gateway hands us so the next reload
+  // rehydrates the same conversation. Clearing happens through the New
+  // chat button below; clear-on-error is intentionally NOT done — a
+  // transient gateway error shouldn't lose the user's history.
+  useEffect(() => {
+    if (!sessionKey) return;
+    try {
+      window.localStorage.setItem(PANEL_SESSION_STORAGE_KEY, sessionKey);
+    } catch {
+      /* localStorage unavailable — ignore. */
+    }
+  }, [sessionKey]);
+
+  const onNewChat = useCallback(() => {
+    try {
+      window.localStorage.removeItem(PANEL_SESSION_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    // Strip the ?resume= query if present so the reload truly starts fresh.
+    const url = new URL(window.location.href);
+    url.searchParams.delete("resume");
+    window.location.replace(url.toString());
+  }, []);
   const canvas = useCanvasPreview(turns);
   // PR-006 — Panel right pane is locked to the fixed port. Other 517x
   // servers the gateway detects still show up in `devServers`, but the
@@ -196,9 +246,23 @@ export default function PanelPage() {
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Chat
           </span>
-          <Badge tone={state === "open" ? "success" : state === "error" ? "destructive" : "secondary"}>
-            {state === "open" ? "live" : state}
-          </Badge>
+          <div className="flex items-center gap-2">
+            {/* PR-009 — clears the durable Panel session and reloads so a
+              * persisted conversation can be retired without devtools. */}
+            <Button
+              ghost
+              size="icon"
+              onClick={onNewChat}
+              aria-label="Start a new Panel chat"
+              title="New chat — clears the saved session"
+              className="h-7 w-7"
+            >
+              <MessageCirclePlus className="h-3.5 w-3.5" />
+            </Button>
+            <Badge tone={state === "open" ? "success" : state === "error" ? "destructive" : "secondary"}>
+              {state === "open" ? "live" : state}
+            </Badge>
+          </div>
         </header>
 
         {(tokenMissing || error) && (
