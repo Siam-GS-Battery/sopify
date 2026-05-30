@@ -5848,6 +5848,50 @@ async def vibe_security_review(name: str, request: Request):
     return {"ok": True, "project": marker, "report": report}
 
 
+class _SecurityFindingAck(BaseModel):
+    addressed: bool
+
+
+@app.put("/api/vibe/projects/{name}/security-findings/{vuln_id}")
+async def vibe_set_security_finding_ack(
+    name: str,
+    vuln_id: str,
+    body: _SecurityFindingAck,
+    request: Request,
+):
+    """Mark / unmark a single security finding as addressed.
+
+    PR-010 — the security checklist UI calls this when the user ticks a
+    finding's checkbox. State lives on the project marker so it survives
+    re-opens and reloads. ``vuln_id`` matches the IDs the frontend parser
+    derives from ``SECURITY_REVIEW.md`` headings (category + location);
+    re-running the review with the same finding text keeps the same ID
+    so the user's acks aren't lost. The endpoint is idempotent: ticking
+    an already-ticked finding is a no-op.
+    """
+    _require_token(request)
+    if not vuln_id or len(vuln_id) > 256:
+        raise HTTPException(status_code=400, detail="invalid vuln_id")
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    current = marker.get("addressed_security_findings") or []
+    if not isinstance(current, list):
+        current = []
+    addressed: set[str] = {str(x) for x in current if isinstance(x, str)}
+    if body.addressed:
+        addressed.add(vuln_id)
+    else:
+        addressed.discard(vuln_id)
+    marker["addressed_security_findings"] = sorted(addressed)
+    _vibe_write_marker(d, marker)
+    return {
+        "ok": True,
+        "vuln_id": vuln_id,
+        "addressed": body.addressed,
+        "addressed_security_findings": marker["addressed_security_findings"],
+    }
+
+
 _VIBE_UPLOADS_DIRNAME = "uploads"
 _VIBE_UPLOADS_MAX_BYTES = 50 * 1024 * 1024  # 50 MB per file
 _VIBE_UPLOADS_ALLOWED_EXTS = frozenset({

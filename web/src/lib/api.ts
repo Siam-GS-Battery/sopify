@@ -585,7 +585,29 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ port }),
     }),
+  /**
+   * PR-010 — toggle the "addressed" flag for a single security-review
+   * finding. The vuln_id is the stable parser-derived ID
+   * (category + location slug) so re-runs of the review keep prior
+   * acks attached to the same finding text.
+   */
+  setVibeSecurityFindingAck: (name: string, vulnId: string, addressed: boolean) =>
+    fetchJSON<SecurityFindingAckResponse>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/security-findings/${encodeURIComponent(vulnId)}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addressed }),
+      },
+    ),
 };
+
+export interface SecurityFindingAckResponse {
+  ok: boolean;
+  vuln_id: string;
+  addressed: boolean;
+  addressed_security_findings: string[];
+}
 
 export interface KillPortResponse {
   port: number;
@@ -635,6 +657,10 @@ export interface VibeProjectMarker {
   phase: VibePhase;
   session_id?: string | null;
   summary?: string;
+  /** PR-010 — stable IDs of security-review findings the user has
+   * marked as addressed. Persisted on the marker so checks survive
+   * reloads and re-runs of the review. */
+  addressed_security_findings?: string[];
 }
 
 export interface VibeProjectSummary {
