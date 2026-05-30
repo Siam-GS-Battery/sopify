@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  Check,
   FileSpreadsheet,
   FileText,
   Folder,
@@ -390,6 +391,37 @@ const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // Filtering client-side avoids the round-trip + 413 toast for an obvious reject.
 const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 
+// Q3 (Inputs & Outputs) drives Theme + half the add-ons. These maps are the
+// single source of truth for that auto-selection logic.
+type InputChoice = "manual" | "spreadsheet" | "qr-scan";
+type OutputChoice = "dashboard" | "form";
+type AccessMode = "solo" | "team-shared" | "team-isolated";
+
+const INPUT_OPTIONS: { id: InputChoice; label: string; hint: string }[] = [
+  { id: "manual", label: "Type it manually", hint: "Forms, text fields, dropdowns" },
+  { id: "spreadsheet", label: "Upload a spreadsheet", hint: "CSV / Excel bulk import" },
+  { id: "qr-scan", label: "Scan a code", hint: "QR / barcode via camera" },
+];
+
+const OUTPUT_OPTIONS: { id: OutputChoice; label: string; hint: string }[] = [
+  { id: "dashboard", label: "Charts & tables to monitor", hint: "Dashboards, KPIs, reports" },
+  { id: "form", label: "A form to fill in and submit", hint: "Data-entry, registration, request" },
+];
+
+// Q4 — predefined "nice to have but NOT v1" items. Selected items get written
+// into the project's brief.md as explicit non-goals so the brainstorm agent
+// won't scope-creep them in.
+const SCOPE_EXCLUSIONS: { id: string; label: string }[] = [
+  { id: "notifications-email", label: "Email / Line notifications" },
+  { id: "export-pdf-excel", label: "Export to PDF or Excel" },
+  { id: "multi-language", label: "Multi-language support" },
+  { id: "advanced-search", label: "Advanced search & filters" },
+  { id: "audit-log", label: "Audit log / activity history" },
+  { id: "real-time-updates", label: "Real-time updates (vs manual refresh)" },
+  { id: "bulk-operations", label: "Bulk edit / delete many at once" },
+  { id: "mobile-polish", label: "Mobile-optimised layout" },
+];
+
 type CreateStatus =
   | { kind: "idle" }
   | { kind: "submitting" }
@@ -405,12 +437,49 @@ function CreateForm({
   const [name, setName] = useState("");
   const [mode, setMode] = useState<string | null>(null);
   const [addOns, setAddOns] = useState<Set<string>>(() => new Set());
+  const [purpose, setPurpose] = useState("");
+  const [accessMode, setAccessMode] = useState<AccessMode | null>(null);
+  const [inputs, setInputs] = useState<Set<InputChoice>>(() => new Set());
+  const [outputs, setOutputs] = useState<Set<OutputChoice>>(() => new Set());
+  const [exclusions, setExclusions] = useState<Set<string>>(() => new Set());
   const [uploads, setUploads] = useState<{
     csv: File[];
     spec: File[];
     image: File[];
   }>({ csv: [], spec: [], image: [] });
   const [status, setStatus] = useState<CreateStatus>({ kind: "idle" });
+
+  // Q3 (outputs) → Theme. Dashboard wins ties because "monitor" is the more
+  // common case for our users; Form-Registration is picked only when the user
+  // explicitly wants data-entry without a dashboard view.
+  useEffect(() => {
+    if (outputs.has("dashboard")) setMode("dashboard");
+    else if (outputs.has("form")) setMode("form-registration");
+  }, [outputs]);
+
+  // Q2 (access) + Q3 (inputs) → add-on toggles. Driven from the answers so the
+  // user doesn't have to know which add-on backs which capability — but they
+  // can still flip toggles by hand below, since this is a one-way "answers →
+  // add-ons" projection (we don't reverse-update answers if they tweak toggles).
+  useEffect(() => {
+    setAddOns((prev) => {
+      const next = new Set(prev);
+      // Q3 input mapping
+      if (inputs.has("spreadsheet")) next.add("file-upload");
+      else next.delete("file-upload");
+      if (inputs.has("qr-scan")) next.add("qr-scan");
+      else next.delete("qr-scan");
+      // Q2 access mapping — any team mode needs auth; per-user isolation also
+      // needs Supabase so RLS can enforce the boundary at the DB layer.
+      if (accessMode === "team-shared" || accessMode === "team-isolated") {
+        next.add("auth-jwt");
+      } else if (accessMode === "solo") {
+        next.delete("auth-jwt");
+      }
+      if (accessMode === "team-isolated") next.add("database-supabase");
+      return next;
+    });
+  }, [inputs, accessMode]);
 
   const toggleAddOn = useCallback((key: string) => {
     setAddOns((prev) => {
@@ -438,8 +507,29 @@ function CreateForm({
   );
 
   const nameValid = NAME_RE.test(name);
+  const purposeValid = purpose.trim().length > 0;
+  const questionsValid =
+    purposeValid &&
+    accessMode !== null &&
+    inputs.size > 0 &&
+    outputs.size > 0;
   const canSubmit =
-    nameValid && mode !== null && status.kind !== "submitting";
+    nameValid &&
+    questionsValid &&
+    mode !== null &&
+    status.kind !== "submitting";
+
+  const toggleSetItem = <T,>(
+    setter: React.Dispatch<React.SetStateAction<Set<T>>>,
+    key: T,
+  ) => {
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   const onSubmit = useCallback(async () => {
     if (!canSubmit || mode === null) return;
@@ -493,7 +583,7 @@ function CreateForm({
               New Vibe Code project
             </Typography>
             <p className="mt-1 text-xs text-muted-foreground">
-              Name the project, choose a theme, toggle any add-ons.
+              Answer a few scoping questions — theme + add-ons + uploads follow.
             </p>
           </div>
         </header>
@@ -530,8 +620,133 @@ function CreateForm({
           </p>
         </section>
 
+        <section id="step-purpose" className="flex flex-col gap-2">
+          <SectionLabel index={2} title="Purpose" />
+          <p className="text-xs text-muted-foreground/80">
+            In one sentence: who uses this, and what does it help them get done?
+          </p>
+          <textarea
+            rows={3}
+            placeholder="e.g. Production-line operators log battery test runs so QA can spot failing cells before they ship."
+            value={purpose}
+            onChange={(e) => setPurpose(e.target.value)}
+            className={cn(
+              "w-full max-w-2xl rounded-md border bg-background-base/60 px-3 py-2",
+              "text-sm text-midground placeholder:text-muted-foreground/50",
+              "focus-visible:outline-none focus-visible:ring-2",
+              purposeValid || purpose === ""
+                ? "border-border/60 focus-visible:ring-midground/30"
+                : "border-destructive/60 focus-visible:ring-destructive/40",
+            )}
+          />
+          <p className="text-[0.7rem] text-muted-foreground/60">
+            If you can't answer this, the project isn't ready to start — pause here and figure it out first.
+          </p>
+        </section>
+
+        <section id="step-access" className="flex flex-col gap-3">
+          <SectionLabel index={3} title="Users & Access" />
+          <p className="text-xs text-muted-foreground/80">
+            Is this just for you, or for a team?
+          </p>
+          <div className="flex flex-col gap-2">
+            <RadioRow
+              label="Just for me"
+              hint="Single user — no login, no per-user isolation."
+              checked={accessMode === "solo"}
+              onSelect={() => setAccessMode("solo")}
+            />
+            <RadioRow
+              label="A team — everyone sees the same data"
+              hint="Shared dataset behind a login. Auth (JWT) gets toggled below."
+              checked={accessMode === "team-shared"}
+              onSelect={() => setAccessMode("team-shared")}
+            />
+            <RadioRow
+              label="A team — each person sees only their own data"
+              hint="Per-user data isolation. Pulls in Auth + Supabase (row-level security)."
+              checked={accessMode === "team-isolated"}
+              onSelect={() => setAccessMode("team-isolated")}
+            />
+          </div>
+          <p className="text-[0.7rem] text-muted-foreground/60">
+            Retrofitting auth or per-user data later usually means rewriting half the schema — easier to decide now.
+          </p>
+        </section>
+
+        <section id="step-io" className="flex flex-col gap-3">
+          <SectionLabel index={4} title="Inputs & Outputs" />
+          <p className="text-xs text-muted-foreground/80">
+            How does information get in — and how do you want to see it come back out?
+          </p>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="flex flex-col gap-2">
+              <Typography
+                mondwest
+                className="text-[0.65rem] tracking-[0.12em] uppercase text-muted-foreground/70"
+              >
+                In
+              </Typography>
+              {INPUT_OPTIONS.map((o) => (
+                <CheckRow
+                  key={o.id}
+                  label={o.label}
+                  hint={o.hint}
+                  checked={inputs.has(o.id)}
+                  onToggle={() => toggleSetItem(setInputs, o.id)}
+                />
+              ))}
+            </div>
+            <div className="flex flex-col gap-2">
+              <Typography
+                mondwest
+                className="text-[0.65rem] tracking-[0.12em] uppercase text-muted-foreground/70"
+              >
+                Out
+              </Typography>
+              {OUTPUT_OPTIONS.map((o) => (
+                <CheckRow
+                  key={o.id}
+                  label={o.label}
+                  hint={o.hint}
+                  checked={outputs.has(o.id)}
+                  onToggle={() => toggleSetItem(setOutputs, o.id)}
+                />
+              ))}
+            </div>
+          </div>
+          <p className="text-[0.7rem] text-muted-foreground/60">
+            Your answers auto-pick the theme + relevant add-ons below — adjust them by hand if needed.
+          </p>
+        </section>
+
+        <section id="step-scope" className="flex flex-col gap-3">
+          <SectionLabel
+            index={5}
+            title="Scope boundary (optional)"
+          />
+          <p className="text-xs text-muted-foreground/80">
+            What would be nice to have, but is <strong>NOT</strong> needed for the first version?
+            Tick items to mark them as explicit non-goals so the agent won't scope-creep them in.
+          </p>
+          <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {SCOPE_EXCLUSIONS.map((s) => (
+              <li key={s.id}>
+                <CheckRow
+                  label={s.label}
+                  checked={exclusions.has(s.id)}
+                  onToggle={() => toggleSetItem(setExclusions, s.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+
         <section id="step-theme" className="flex flex-col gap-3">
-          <SectionLabel index={2} title="Theme" />
+          <SectionLabel index={6} title="Theme" />
+          <p className="text-xs text-muted-foreground/80">
+            Pre-selected from your Inputs & Outputs answer — override if you have a different shape in mind.
+          </p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {VIBE_THEMES.map((t) => (
               <ThemeCard
@@ -545,7 +760,10 @@ function CreateForm({
         </section>
 
         <section id="step-addons" className="flex flex-col gap-3">
-          <SectionLabel index={3} title="Add-ons (optional)" />
+          <SectionLabel index={7} title="Add-ons" />
+          <p className="text-xs text-muted-foreground/80">
+            Auth / Supabase / File-upload / QR-scan are auto-toggled from your answers above. Flip any of them by hand if you disagree.
+          </p>
           <ul className="flex flex-col divide-y divide-border/40 rounded-lg border border-border/60 bg-background-base/40">
             {ADD_ONS.map((a) => (
               <AddOnRow
@@ -559,7 +777,7 @@ function CreateForm({
         </section>
 
         <section id="step-csv" className="flex flex-col gap-3">
-          <SectionLabel index={4} title="Data files — CSV / Excel (optional)" />
+          <SectionLabel index={8} title="Data files — CSV / Excel (optional)" />
           <FileDropZone
             icon={FileSpreadsheet}
             accept=".csv,.xlsx,.xls"
@@ -573,7 +791,7 @@ function CreateForm({
         </section>
 
         <section id="step-spec" className="flex flex-col gap-3">
-          <SectionLabel index={5} title="Spec markdown (optional)" />
+          <SectionLabel index={9} title="Spec markdown (optional)" />
           <FileDropZone
             icon={FileText}
             accept=".md,.markdown"
@@ -587,7 +805,7 @@ function CreateForm({
         </section>
 
         <section id="step-images" className="flex flex-col gap-3">
-          <SectionLabel index={6} title="Images (optional)" />
+          <SectionLabel index={10} title="Images (optional)" />
           <FileDropZone
             icon={ImageIcon}
             accept=".png,.jpg,.jpeg,.webp,.gif"
@@ -661,6 +879,95 @@ function AddOnRow({
         aria-label={addOn.label}
       />
     </li>
+  );
+}
+
+function RadioRow({
+  label,
+  hint,
+  checked,
+  onSelect,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={checked}
+      className={cn(
+        "flex items-start gap-3 rounded-md border px-3 py-2 text-left transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/30",
+        checked
+          ? "border-[var(--primary)] bg-[var(--primary)]/5"
+          : "border-border/60 bg-background-base/40 hover:border-midground/40",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2",
+          checked ? "border-[var(--primary)]" : "border-border/70",
+        )}
+      >
+        {checked && <span className="h-2 w-2 rounded-full bg-[var(--primary)]" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-midground">{label}</p>
+        {hint && (
+          <p className="mt-0.5 text-xs text-muted-foreground/70">{hint}</p>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function CheckRow({
+  label,
+  hint,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      onClick={onToggle}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-md border px-3 py-2 text-left transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/30",
+        checked
+          ? "border-[var(--primary)] bg-[var(--primary)]/5"
+          : "border-border/60 bg-background-base/40 hover:border-midground/40",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border-2",
+          checked
+            ? "border-[var(--primary)] bg-[var(--primary)] text-white"
+            : "border-border/70 bg-transparent",
+        )}
+      >
+        {checked && <Check className="h-3 w-3" strokeWidth={3} />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-midground">{label}</p>
+        {hint && (
+          <p className="mt-0.5 text-xs text-muted-foreground/70">{hint}</p>
+        )}
+      </span>
+    </button>
   );
 }
 
