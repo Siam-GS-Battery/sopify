@@ -775,6 +775,8 @@ WebSocket transport, JSON-RPC dialect mirroring the Ink TUI's stdio protocol. Co
 
 The flagship AI-DLC (AI-Driven Development Lifecycle) flow at `/vibe-code`. Lets a non-technical user scaffold a web project end-to-end through a guided chat.
 
+> **Spec:** [`specs/VIBE_CODE_PANEL_SPEC.md`](specs/VIBE_CODE_PANEL_SPEC.md) — state machine, per-phase model assignment, port routing (Vibe=5174 / Panel=5173), background runtime, and compute separation. This section documents what is implemented today; the spec documents the target.
+
 ### 8.1 User journey (6 visible steps)
 
 | Step | Backend phase | UI |
