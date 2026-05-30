@@ -5481,16 +5481,54 @@ def _read_if_exists(path: Path) -> Optional[str]:
     return path.read_text(encoding="utf-8") if path.is_file() else None
 
 
+# PR-011 — Brainstorm phase mandates three top-level sections in
+# REQUIREMENTS.md (spec §2, footnote 1): Spec / System Architecture / Task.
+# Match leniently — any heading level, optional `N.` ordinal, case
+# insensitive — so a slightly-off agent output still registers.
+_REQUIREMENTS_SECTION_PATTERNS: dict[str, re.Pattern[str]] = {
+    "spec": re.compile(
+        r"^#{1,6}\s+(?:\d+\.\s*)?spec\b", re.MULTILINE | re.IGNORECASE
+    ),
+    "system_architecture": re.compile(
+        r"^#{1,6}\s+(?:\d+\.\s*)?system\s+architecture\b",
+        re.MULTILINE | re.IGNORECASE,
+    ),
+    "task": re.compile(
+        r"^#{1,6}\s+(?:\d+\.\s*)?tasks?\b", re.MULTILINE | re.IGNORECASE
+    ),
+}
+
+
+def analyze_requirements_sections(content: Optional[str]) -> dict:
+    """Detect which of the three brainstorm sections are present.
+
+    Returns ``{spec, system_architecture, task, complete}``. ``complete``
+    is True iff all three sections were found. ``content=None`` (file
+    missing) returns all-False without crashing. Used by the dashboard
+    to surface incomplete brainstorm output before the user advances.
+    """
+    present = {key: False for key in _REQUIREMENTS_SECTION_PATTERNS}
+    if content:
+        for key, pat in _REQUIREMENTS_SECTION_PATTERNS.items():
+            present[key] = bool(pat.search(content))
+    present["complete"] = all(present[k] for k in _REQUIREMENTS_SECTION_PATTERNS)
+    return present
+
+
 @app.get("/api/vibe/projects/{name}")
 async def vibe_get_project(name: str, request: Request):
     """Return project marker + content of artifact files if present."""
     _require_token(request)
     d = _vibe_project_dir(name)
     marker = _vibe_read_marker(d)
+    requirements_md = _read_if_exists(d / "REQUIREMENTS.md")
     return {
         "project": marker,
         "path": str(d),
-        "requirements_md": _read_if_exists(d / "REQUIREMENTS.md"),
+        "requirements_md": requirements_md,
+        # PR-011 — per-section presence flags for REQUIREMENTS.md so the
+        # dashboard can warn when the brainstorm output is incomplete.
+        "requirements_sections": analyze_requirements_sections(requirements_md),
         "design_md": _read_if_exists(d / "DESIGN.md"),
         "database_md": _read_if_exists(d / "DATABASE.md"),
         "api_md": _read_if_exists(d / "API.md"),
