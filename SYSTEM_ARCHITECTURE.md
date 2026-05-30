@@ -52,6 +52,7 @@ Most paths below are relative to `sopify-harness/` unless noted (`~/.hermes/`, `
 12. [ENCM control plane (network policy)](#12-encm-control-plane)
 13. [Dev workflow & build pipeline](#13-dev-workflow--build-pipeline)
 14. [Known quirks & gotchas](#14-known-quirks--gotchas)
+15. [Model selection strategy](#15-model-selection-strategy)
 
 ---
 
@@ -434,6 +435,8 @@ Auxiliary slots ([web_server.py:996](sopify-harness/hermes_cli/web_server.py#L99
 OAuth providers ([web_server.py:1427](sopify-harness/hermes_cli/web_server.py#L1427)) — anthropic, claude-code, nous, openai-codex, qwen-oauth, minimax-oauth — accessed via `/api/providers/oauth/*` endpoints.
 
 Sopify-specific API key endpoints — `/api/providers/api-key{,/{provider_id},/test/{provider_id}}` — use the registry from `plugins.sopify_providers` ([web_server.py:2385-2393](sopify-harness/hermes_cli/web_server.py#L2385)) and sync to sbx secret store when `sync_to_sbx_secret=True`.
+
+**Which models to expose / use as defaults** is a policy question separate from the wire protocol above. See [§15 Model selection strategy](#15-model-selection-strategy) and the standalone [MODEL_SELECTION.md](sopify-harness/MODEL_SELECTION.md) for the per-use-case mapping, cost rationale, and proposed picker order.
 
 ### 5.5 Cron, profiles, skills, tools, logs, analytics
 
@@ -1329,6 +1332,67 @@ sbx rm sopify-<hash>
 17. **Per-session dev-server lifecycle only works on `/api/ws` clients** — Vibe Code and `/panel` use the in-process gateway, so they share `dev_server_manager` state with the FastAPI process. The PTY-mode `/api/pty` chat tab runs a *subprocess* gateway whose imports of `dev_server_manager` fail silently — no preview iframe in that tab anyway, so this is acceptable.
 
 18. **Agent-initiated dev server may have command in args that we can't parse** — `_extract_command_hint` covers the common keys (`command`, `cmd`, `shell`, `script`, `code`), but if a custom tool uses an unusual arg shape the spec's `command` stays empty and revive marks it `failed`. Symptom: agent reports `npm run dev` works, but switching sessions and coming back leaves the iframe blank. Add the missing key to `_extract_command_hint` to fix.
+
+---
+
+## 15. Model selection strategy
+
+**TL;DR:** Sopify currently defaults to `anthropic/claude-opus-4.7` at the top of every provider picker ([models.py:165](sopify-harness/hermes_cli/models.py#L165)). For a corporate deployment driven mostly by non-engineers and routine SDLC tasks, that default is over-priced by 10×–50× vs equally-capable OSS alternatives that already pass the codebase's tool-calling filter ([models.py:1093](sopify-harness/hermes_cli/models.py#L1093)). The proposed policy is **hybrid**: Anthropic where taste/liability matters (Vibe Design, Security review), OSS (Kimi K2.6, DeepSeek V3.2, Qwen3.6-plus) for everything else.
+
+Full rationale, cost numbers, migration plan, and risks live in [**MODEL_SELECTION.md**](sopify-harness/MODEL_SELECTION.md) — this section is the architecture-level summary.
+
+### 15.1 What the runtime already supports
+
+| Capability | Location | Notes |
+|---|---|---|
+| Provider cascade (primary → fallback) | [router.py:20](sopify-harness/plugins/sopify_providers/router.py#L20) | Default chain `anthropic → openrouter → hermes_default`; 1 h blacklist on 401/403/429 |
+| Per-task auxiliary slots | [web_server.py:996](sopify-harness/hermes_cli/web_server.py#L996) | `vision`, `web_extract`, `compression`, `session_search`, `skills_hub`, `approval`, `mcp`, `title_generation`, `curator` — already separable model assignments |
+| Curated picker | [models.py:163](sopify-harness/hermes_cli/models.py#L163) | `_PROVIDER_MODELS` — 20+ providers; first entry = picker default |
+| Live tool-calling filter | [models.py:1093](sopify-harness/hermes_cli/models.py#L1093) | OpenRouter `/v1/models` items whose `supported_parameters` omit `tools` are hidden |
+| Override chain via settings | [router.py:33](sopify-harness/plugins/sopify_providers/router.py#L33) | `~/.sopify/settings.json:provider_chain` |
+
+### 15.2 Per-Vibe-phase model assignment (proposed)
+
+The Vibe phase machine ([web_server.py:5484](sopify-harness/hermes_cli/web_server.py#L5484)) currently uses one model across all phases. Splitting per-phase is the highest-leverage cost lever (Vibe is the flagship flow + the bulk of token spend).
+
+| Phase | System prompt | Workload character | Recommended primary | Rationale |
+|---|---|---|---|---|
+| **brainstorm** | [prompts/vibe/phases/brainstorm.md](sopify-harness/prompts/vibe/phases/brainstorm.md) | Q&A, short turns | `claude-haiku-4-5` | Cheap, fast, low-stakes |
+| **design** | [prompts/vibe/phases/design.md](sopify-harness/prompts/vibe/phases/design.md) | Frontend code + Tailwind taste; uses `frontend-design` skill | `claude-sonnet-4-6` | Anthropic-curated skill expects Claude family; downgrade from Opus is fine |
+| **backend** | [prompts/vibe/phases/backend.md](sopify-harness/prompts/vibe/phases/backend.md) | Express + Supabase + SQL | `moonshotai/kimi-k2.6` | Coding-strong OSS; 1/20th the cost of Opus |
+| **improvement** | [prompts/vibe/phases/improvement.md](sopify-harness/prompts/vibe/phases/improvement.md) | Iterative refactor | `claude-sonnet-4-6` | Diff-aware edits benefit from tool-calling reliability |
+| **security** | [prompts/vibe/phases/security.md](sopify-harness/prompts/vibe/phases/security.md) | `claude-code-security-review` skill | `claude-opus-4-7` | False negatives expensive; do not compromise |
+| **approve** | [prompts/vibe/phases/approve.md](sopify-harness/prompts/vibe/phases/approve.md) | Handoff doc generation | `claude-haiku-4-5` | Cheap summary |
+
+The simplest implementation is a `model` field on the phase descriptor in `_VIBE_BUILDING_PHASES` (see `_vibe_compose_system_prompt` in [web_server.py](sopify-harness/hermes_cli/web_server.py#L5484)) plus a passthrough to `pre_api_request`. See MODEL_SELECTION.md §6 for the migration steps.
+
+### 15.3 Non-Vibe workloads
+
+| Workload | Current behaviour | Proposed primary | Cost delta |
+|---|---|---|---|
+| `code-with-you` mode ([modes/code_with_you.py](sopify-harness/plugins/sopify_modes/code_with_you.py)) | Sonnet 4.6 | `moonshotai/kimi-k2.6` | −85% |
+| `company-sop` mode ([modes/config.py](sopify-harness/plugins/sopify_modes/config.py)) | Haiku 4.5 | `qwen/qwen3.6-plus` | −50% + native Thai |
+| `living-employee` mode ([modes/living.py](sopify-harness/plugins/sopify_modes/living.py)) | Haiku 4.5 | `qwen/qwen3.6-plus` | −50% |
+| `/gs-mad` multi-agent skill | Opus 4.7 | `claude-sonnet-4-6` (default) or `deepseek/deepseek-v4-pro` (cost-tier) | −80% to −97% |
+| Auxiliary slots (title gen, compression) | Inherits primary | `claude-haiku-4-5` pinned | Drops aux-slot spend to noise |
+
+### 15.4 Failover behaviour
+
+`ProviderRouter.pick()` already handles 1 h blacklist + cascade ([router.py:51](sopify-harness/plugins/sopify_providers/router.py#L51)). What's missing for an OSS-heavy default is a *capability-preserving* fallback — e.g. if the primary is `kimi-k2.6` (OpenRouter route) and OpenRouter 429s, the current code falls through to the entire Hermes default chain, which may pick something with weaker tool-calling. MODEL_SELECTION.md §5 proposes adding a tier-aware fallback (`primary OSS → equivalent OSS via different provider → Sonnet 4.6`) per scope.
+
+### 15.5 What NOT to substitute
+
+Three places where staying on Anthropic is the right call even at premium cost:
+
+1. **`skills/frontend-design/`** — vendored verbatim from `anthropics/claude-code` ([SYSTEM_ARCHITECTURE.md rev 2.1 changes](#whats-new-in-rev-21-pr-featvibe-phase-prompts-and-supabase-2026-05-30)). Its aesthetic guide is calibrated against Claude; OSS models follow it with measurably lower fidelity (generic Inter/Roboto output recurs).
+2. **Security review phase** — false negatives are unbounded liability; OSS models have shorter track records on this specific task class.
+3. **`/gs-mad` runs needing 1 M context** — only Claude offers 1 M with maintained quality; DeepSeek/Qwen cap at 200 K–256 K.
+
+### 15.6 Open questions before shipping
+
+- **Pricing freshness** — numbers in MODEL_SELECTION.md are 2026-05 snapshots. Pin a refresh cadence (quarterly?) and a process for who updates it.
+- **Picker UX** — flipping the default away from Opus is a breaking expectation change for users who've memorised the picker order. Surface a one-time announcement or banner.
+- **Per-phase override telemetry** — once the phase machine pins per-phase models, the `/api/analytics/models` endpoint ([web_server.py:3315-3384](sopify-harness/hermes_cli/web_server.py#L3315)) should attribute spend by phase so we can verify the projected −70% to −80% holds in practice.
 
 ---
 
