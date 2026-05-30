@@ -5405,8 +5405,19 @@ _VIBE_PHASES: list[str] = [
 # matching phase. The SKILL.md body is inlined so the agent has the
 # methodology in scope without an extra `skill_view` round-trip.
 _VIBE_PHASE_SKILLS: dict[str, tuple[str, ...]] = {
-    "design": ("frontend-design",),
-    "security": ("red-teaming/claude-code-security-review",),
+    # Design phase: generic taste/aesthetic skill from Anthropic +
+    # GS Battery brand/component conventions.
+    "design":      ("frontend-design", "sopify-sdlc-design"),
+    # Backend phase covers both schema design and API + wiring. Load
+    # database conventions FIRST so the agent leads with schema, then
+    # backend API rules so the API shape derives from the locked schema.
+    "backend":     ("sopify-sdlc-database", "sopify-sdlc-backend"),
+    # Improvement phase: free-form iteration. Keep all three SDLC
+    # skills loaded so the agent can't drift outside GS Battery's
+    # frontend OR backend conventions while making tweaks. The user's
+    # explicit non-goals (Q4 in brief.md) are the scope anchor.
+    "improvement": ("sopify-sdlc-design", "sopify-sdlc-database", "sopify-sdlc-backend"),
+    "security":    ("red-teaming/claude-code-security-review",),
 }
 
 
