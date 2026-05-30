@@ -5702,6 +5702,103 @@ async def vibe_security_review(name: str, request: Request):
     return {"ok": True, "project": marker, "report": report}
 
 
+_VIBE_UPLOADS_DIRNAME = "uploads"
+_VIBE_UPLOADS_MAX_BYTES = 50 * 1024 * 1024  # 50 MB per file
+_VIBE_UPLOADS_ALLOWED_EXTS = frozenset({
+    ".csv", ".xlsx", ".xls",                       # tabular data
+    ".md", ".markdown",                             # spec markdown
+    ".png", ".jpg", ".jpeg", ".webp", ".gif",       # images
+})
+
+
+@app.post("/api/vibe/projects/{name}/uploads")
+async def vibe_upload_files(name: str, request: Request):
+    """Save user-provided context files into `<project>/uploads/`.
+
+    Accepts multipart form-data; every file part (any field name) is written
+    flat into the uploads dir, dropping any path components from the
+    client-supplied filename. The brainstorm agent reads this directory as
+    additional context (see brainstorm phase prompt).
+
+    Validation: extension must be in `_VIBE_UPLOADS_ALLOWED_EXTS`, each file
+    must be ≤ 50 MB. Existing files with the same name are overwritten so the
+    UI can show a stable filename when the user re-uploads.
+    """
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    uploads_dir = d / _VIBE_UPLOADS_DIRNAME
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    project_root = d.resolve()
+
+    form = await request.form()
+    saved: list[dict] = []
+    for _key, value in form.multi_items():
+        filename = getattr(value, "filename", None)
+        if not filename:
+            continue
+        safe_name = Path(filename).name
+        if not safe_name or safe_name in (".", ".."):
+            continue
+        ext = Path(safe_name).suffix.lower()
+        if ext not in _VIBE_UPLOADS_ALLOWED_EXTS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"file type not allowed: {safe_name}",
+            )
+        # Defense-in-depth: re-resolve and ensure dest still inside project dir
+        dest = uploads_dir / safe_name
+        try:
+            (uploads_dir.resolve() / safe_name).relative_to(project_root)
+        except ValueError:
+            raise HTTPException(
+                status_code=403,
+                detail="upload target outside project dir",
+            )
+        written = 0
+        try:
+            with dest.open("wb") as fh:
+                while True:
+                    chunk = await value.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > _VIBE_UPLOADS_MAX_BYTES:
+                        fh.close()
+                        dest.unlink(missing_ok=True)
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"file too large: {safe_name}",
+                        )
+                    fh.write(chunk)
+        finally:
+            await value.close()
+        saved.append({
+            "name": safe_name,
+            "size": dest.stat().st_size,
+        })
+    _log.info("vibe project %s: %d upload(s) saved", name, len(saved))
+    return {"ok": True, "uploaded": saved}
+
+
+@app.get("/api/vibe/projects/{name}/uploads")
+async def vibe_list_uploads(name: str, request: Request):
+    """List files currently stored in `<project>/uploads/`."""
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    uploads_dir = d / _VIBE_UPLOADS_DIRNAME
+    if not uploads_dir.is_dir():
+        return {"files": []}
+    files = []
+    for p in sorted(uploads_dir.iterdir()):
+        if not p.is_file():
+            continue
+        files.append({
+            "name": p.name,
+            "size": p.stat().st_size,
+        })
+    return {"files": files}
+
+
 @app.delete("/api/vibe/projects/{name}")
 async def vibe_delete_project(name: str, request: Request):
     """Remove a vibe project directory."""
