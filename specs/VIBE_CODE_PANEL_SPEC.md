@@ -76,19 +76,29 @@ Six lifecycle states. Phase keys must stay in sync with
 [`VIBE_STEP_KEYS`](../web/src/components/vibe/VerticalStepper.tsx#L104) and the
 backend `VibePhase` enum.
 
-| # | State          | Default model        | Left pane                       | Right pane                          | Output artifact                                                       |
-|---|----------------|----------------------|---------------------------------|-------------------------------------|-----------------------------------------------------------------------|
-| 1 | `brainstorm`   | `anthropic/sonnet`   | Chat (agent thinking + coding)  | (none — chat-only)                  | `SPEC.md`, `ARCHITECTURE.md`, `TASKS.md`                              |
-| 2 | `design`       | `anthropic/sonnet`   | Chat                             | **Frontend @ `localhost:5174`**    | `design.md` + static frontend running on Vite port 5174               |
-| 3 | `backend`      | `qwen`               | Chat                             | Frontend                            | `database.md`, `api.md`, Supabase up on Docker, backend ↔ frontend OK |
-| 4 | `improvement`  | `qwen`               | Chat                             | Frontend                            | Same as `backend` (free-form iteration)                               |
-| 5 | `security`     | `anthropic/sonnet`   | **Security checklist (not chat)** | Frontend                            | `security_review.md` + checklist marks                                |
-| 6 | `ready` / done | `qwen`               | Free-form chat                  | Frontend                            | (final iteration state when user returns)                             |
+| # | State          | Default model        | Driving skill(s)                                                                                                                         | Left pane                         | Right pane                        | Output artifact                                                          |
+|---|----------------|----------------------|------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|-----------------------------------|--------------------------------------------------------------------------|
+| 1 | `brainstorm`   | `anthropic/sonnet`   | (none — agent reasons from `brief.md`)                                                                                                   | Chat                              | (none — chat-only)                | `REQUIREMENTS.md` ¹                                                      |
+| 2 | `design`       | `anthropic/sonnet`   | [`sopify-sdlc-design`](../skills/sopify-sdlc-design/SKILL.md)                                                                            | Chat                              | **Frontend @ `localhost:5174`**   | `DESIGN.md` + static frontend on Vite port 5174                          |
+| 3 | `backend`      | `qwen`               | [`sopify-sdlc-database`](../skills/sopify-sdlc-database/SKILL.md) → [`sopify-sdlc-backend`](../skills/sopify-sdlc-backend/SKILL.md)        | Chat                              | Frontend                          | `DATABASE.md`, `API.md`, Supabase on Docker, backend ↔ frontend wired up |
+| 4 | `improvement`  | `qwen`               | [`sopify-sdlc-design`](../skills/sopify-sdlc-design/SKILL.md) + [`sopify-sdlc-backend`](../skills/sopify-sdlc-backend/SKILL.md)            | Chat                              | Frontend                          | Updates to any of the above; free-form iteration                         |
+| 5 | `security`     | `anthropic/sonnet`   | (security review prompt; see `prompts/vibe/phases/security.md`)                                                                          | **Security checklist (not chat)** | Frontend                          | `SECURITY_REVIEW.md` + checklist marks                                   |
+| 6 | `ready` / done | `qwen`               | (free-form — any of the above on demand)                                                                                                 | Free-form chat                    | Frontend                          | Whatever the user iterates on after final approval                       |
+
+¹ The user's source draft (§1) names brainstorm outputs as *Spec / System
+Architecture / Task* (three files). The current implementation produces a
+single curated `REQUIREMENTS.md`. PR-011 will reconcile this — either by
+splitting into three files or by having `REQUIREMENTS.md` contain all three
+sections explicitly.
 
 **Transition rules.**
 - Forward-only by default. Backward jumps are allowed but warn.
 - Switching to a different project does **not** advance the source project's
   state — see §5 on background runtime.
+- Skill auto-load: the phase prompt names the skill(s) above; the
+  `claude-code` host loads them at phase entry. The split into per-phase
+  skills was introduced in commit `066d23157` (PR #24) — older prompts that
+  reference the bundled `sopify-sdlc` will be updated alongside PR-004.
 
 ---
 
@@ -195,4 +205,4 @@ the next starts.
 | 008   | Panel state change → kill 5173 + reopen                        |
 | 009   | Separate session pools (Vibe vs Panel)                         |
 | 010   | Security phase: checklist UI on the left                       |
-| 011   | Brainstorm output verification: Spec/Arch/Tasks all produced   |
+| 011   | Brainstorm output: reconcile REQUIREMENTS.md vs Spec/Arch/Tasks |
