@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  FileSpreadsheet,
+  FileText,
   Folder,
+  ImageIcon,
   Loader2,
   Plus,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import { Button } from "@nous-research/ui/ui/components/button";
 import { Switch } from "@nous-research/ui/ui/components/switch";
@@ -382,6 +386,10 @@ const ADD_ONS: AddOn[] = [
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
+// Mirror of `_VIBE_UPLOADS_MAX_BYTES` on the backend (hermes_cli/web_server.py).
+// Filtering client-side avoids the round-trip + 413 toast for an obvious reject.
+const UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
 type CreateStatus =
   | { kind: "idle" }
   | { kind: "submitting" }
@@ -397,6 +405,11 @@ function CreateForm({
   const [name, setName] = useState("");
   const [mode, setMode] = useState<string | null>(null);
   const [addOns, setAddOns] = useState<Set<string>>(() => new Set());
+  const [uploads, setUploads] = useState<{
+    csv: File[];
+    spec: File[];
+    image: File[];
+  }>({ csv: [], spec: [], image: [] });
   const [status, setStatus] = useState<CreateStatus>({ kind: "idle" });
 
   const toggleAddOn = useCallback((key: string) => {
@@ -407,6 +420,22 @@ function CreateForm({
       return next;
     });
   }, []);
+
+  const addFiles = useCallback(
+    (slot: "csv" | "spec" | "image", files: File[]) => {
+      setUploads((prev) => ({ ...prev, [slot]: [...prev[slot], ...files] }));
+    },
+    [],
+  );
+  const removeFile = useCallback(
+    (slot: "csv" | "spec" | "image", index: number) => {
+      setUploads((prev) => ({
+        ...prev,
+        [slot]: prev[slot].filter((_, i) => i !== index),
+      }));
+    },
+    [],
+  );
 
   const nameValid = NAME_RE.test(name);
   const canSubmit =
@@ -421,14 +450,33 @@ function CreateForm({
         mode,
         add_ons: [...addOns],
       });
-      onCreated(res.project.name);
+      const projectName = res.project.name;
+      const allFiles = [...uploads.csv, ...uploads.spec, ...uploads.image];
+      if (allFiles.length > 0) {
+        try {
+          await api.uploadVibeFiles(projectName, allFiles);
+        } catch (e: unknown) {
+          // Project was created — surface the upload failure but let the user
+          // proceed; they can re-upload from BrainstormPane (Slice ≥ 4) or
+          // delete the project and retry.
+          setStatus({
+            kind: "error",
+            message:
+              "Project created but uploads failed: " +
+              (e instanceof Error ? e.message : String(e)) +
+              ". You can continue without them or delete and retry.",
+          });
+          return;
+        }
+      }
+      onCreated(projectName);
     } catch (e: unknown) {
       setStatus({
         kind: "error",
         message: e instanceof Error ? e.message : String(e),
       });
     }
-  }, [canSubmit, mode, name, addOns, onCreated]);
+  }, [canSubmit, mode, name, addOns, uploads, onCreated]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pb-8 normal-case lg:flex-row lg:gap-8">
@@ -510,6 +558,48 @@ function CreateForm({
           </ul>
         </section>
 
+        <section id="step-csv" className="flex flex-col gap-3">
+          <SectionLabel index={4} title="Data files — CSV / Excel (optional)" />
+          <FileDropZone
+            icon={FileSpreadsheet}
+            accept=".csv,.xlsx,.xls"
+            extensions={[".csv", ".xlsx", ".xls"]}
+            maxBytes={UPLOAD_MAX_BYTES}
+            files={uploads.csv}
+            description="Tabular data the agent will read as context — e.g. existing reports, historical metrics."
+            onAdd={(fs) => addFiles("csv", fs)}
+            onRemove={(i) => removeFile("csv", i)}
+          />
+        </section>
+
+        <section id="step-spec" className="flex flex-col gap-3">
+          <SectionLabel index={5} title="Spec markdown (optional)" />
+          <FileDropZone
+            icon={FileText}
+            accept=".md,.markdown"
+            extensions={[".md", ".markdown"]}
+            maxBytes={UPLOAD_MAX_BYTES}
+            files={uploads.spec}
+            description="A pre-written spec / brief in Markdown. Stored under uploads/ alongside other context — does not replace REQUIREMENTS.md."
+            onAdd={(fs) => addFiles("spec", fs)}
+            onRemove={(i) => removeFile("spec", i)}
+          />
+        </section>
+
+        <section id="step-images" className="flex flex-col gap-3">
+          <SectionLabel index={6} title="Images (optional)" />
+          <FileDropZone
+            icon={ImageIcon}
+            accept=".png,.jpg,.jpeg,.webp,.gif"
+            extensions={[".png", ".jpg", ".jpeg", ".webp", ".gif"]}
+            maxBytes={UPLOAD_MAX_BYTES}
+            files={uploads.image}
+            description="UX/UI references, screenshots, equipment photos, or work-process diagrams the agent should understand."
+            onAdd={(fs) => addFiles("image", fs)}
+            onRemove={(i) => removeFile("image", i)}
+          />
+        </section>
+
         <SubmitBar canSubmit={canSubmit} status={status} onSubmit={onSubmit} />
       </div>
 
@@ -571,6 +661,160 @@ function AddOnRow({
         aria-label={addOn.label}
       />
     </li>
+  );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface FileDropZoneProps {
+  icon: React.ComponentType<{ className?: string }>;
+  accept: string;
+  extensions: string[];
+  maxBytes: number;
+  files: File[];
+  description: string;
+  onAdd: (files: File[]) => void;
+  onRemove: (index: number) => void;
+}
+
+function FileDropZone({
+  icon: Icon,
+  accept,
+  extensions,
+  maxBytes,
+  files,
+  description,
+  onAdd,
+  onRemove,
+}: FileDropZoneProps) {
+  const [dragOver, setDragOver] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Lower-case the user-supplied extension once so case mismatches don't
+  // silently drop files (Foo.CSV should still count as .csv).
+  const allowed = useMemo(
+    () => new Set(extensions.map((e) => e.toLowerCase())),
+    [extensions],
+  );
+
+  const validate = useCallback(
+    (incoming: FileList | File[]): File[] => {
+      const accepted: File[] = [];
+      const rejected: string[] = [];
+      for (const f of Array.from(incoming)) {
+        const dot = f.name.lastIndexOf(".");
+        const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : "";
+        if (!allowed.has(ext)) {
+          rejected.push(`${f.name} (unsupported type)`);
+          continue;
+        }
+        if (f.size > maxBytes) {
+          rejected.push(
+            `${f.name} (${formatBytes(f.size)} exceeds ${formatBytes(maxBytes)})`,
+          );
+          continue;
+        }
+        accepted.push(f);
+      }
+      setHint(rejected.length ? `Skipped: ${rejected.join(", ")}` : null);
+      return accepted;
+    },
+    [allowed, maxBytes],
+  );
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="Add files"
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          onAdd(validate(e.dataTransfer.files));
+        }}
+        className={cn(
+          "flex cursor-pointer flex-col items-center gap-1 rounded-md border border-dashed px-4 py-6 text-center transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]/30",
+          dragOver
+            ? "border-[var(--primary)] bg-[var(--primary)]/5"
+            : "border-border/60 bg-background-base/40 hover:border-midground/40",
+        )}
+      >
+        <Icon className="h-5 w-5 text-muted-foreground" />
+        <p className="text-sm text-midground">
+          Drop files here or click to browse
+        </p>
+        <p className="text-xs text-muted-foreground/70">{description}</p>
+        <p className="font-mono text-[0.65rem] uppercase tracking-wider text-muted-foreground/50">
+          {extensions.join(" · ")} · max {formatBytes(maxBytes)}
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept={accept}
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files) onAdd(validate(e.target.files));
+            // Reset so picking the same file twice still fires onChange.
+            e.target.value = "";
+          }}
+        />
+      </div>
+      {hint && (
+        <p className="text-[0.7rem] text-destructive">{hint}</p>
+      )}
+      {files.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {files.map((f, i) => (
+            <li
+              key={`${f.name}-${i}`}
+              className="flex items-center gap-2 rounded-md border border-border/40 bg-background-base/40 px-3 py-2 text-xs"
+            >
+              <span className="min-w-0 flex-1 truncate font-mono text-midground">
+                {f.name}
+              </span>
+              <span className="shrink-0 font-mono text-muted-foreground/70">
+                {formatBytes(f.size)}
+              </span>
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                aria-label={`Remove ${f.name}`}
+                className="shrink-0 rounded p-1 text-muted-foreground/60 hover:bg-destructive/10 hover:text-destructive"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
