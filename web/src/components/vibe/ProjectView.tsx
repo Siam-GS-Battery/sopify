@@ -32,6 +32,7 @@ import type {
   VibeProjectMarker,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { VIBE_DEV_PORT, pickDevServerForPort } from "@/lib/vibe-ports";
 
 /**
  * Project work view: phase pane on the left, vertical stepper on the right.
@@ -552,7 +553,10 @@ function DesignPane({
     };
   }, [project.name]);
 
-  const currentServer = devServers[0];
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
+  // unrelated localhost servers detected by the gateway don't hijack the
+  // iframe. Returns null when 5174 isn't running.
+  const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
   const previewSrc = useMemo(
     () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
     [currentServer, reloadKey],
@@ -874,7 +878,10 @@ function BackendPane({
     };
   }, [project.name]);
 
-  const currentServer = devServers[0];
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
+  // unrelated localhost servers detected by the gateway don't hijack the
+  // iframe. Returns null when 5174 isn't running.
+  const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
   const previewSrc = useMemo(
     () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
     [currentServer, reloadKey],
@@ -1222,7 +1229,10 @@ function ImprovementPane({
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
 
-  const currentServer = devServers[0];
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
+  // unrelated localhost servers detected by the gateway don't hijack the
+  // iframe. Returns null when 5174 isn't running.
+  const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
   const previewSrc = useMemo(
     () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
     [currentServer, reloadKey],
