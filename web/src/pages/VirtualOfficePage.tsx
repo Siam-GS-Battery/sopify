@@ -11,7 +11,7 @@ export default function VirtualOfficePage() {
         <div>
           <Typography
             mondwest
-            className="font-bold text-[1.1rem] tracking-[0.05em] uppercase text-midground"
+            className="font-bold text-[1.1rem] tracking-[0.05em] uppercase"
           >
             Dashboard
           </Typography>
