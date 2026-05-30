@@ -5976,6 +5976,41 @@ class _SetActiveSessionBody(BaseModel):
     session_key: str
 
 
+@app.get("/api/vibe/runtimes")
+async def vibe_runtimes(request: Request):
+    """Snapshot of every dev-server runtime grouped by Vibe Code project.
+
+    PR-007 — the dashboard polls this to decide which projects have a
+    running 517x port in the background. Switching projects in the UI is
+    a state change only; the runtime keeps going and shows up here until
+    the user explicitly stops it (POST /api/dev-server/stop) or the
+    sandbox tears down.
+
+    Response shape::
+
+        {
+          "projects": {
+            "my-cool-app": [
+              {
+                "session_key": "...",
+                "port": 5174,
+                "url": "http://localhost:5174/",
+                "status": "running",
+                "pid": 1234,
+                "vibe_project": "my-cool-app",
+                "command": "vite --port 5174",
+                "cwd": "/workspace/my-cool-app",
+                "first_seen": 17xx, "last_seen": 17xx, "last_error": null
+              }
+            ]
+          }
+        }
+    """
+    _require_token(request)
+    from hermes_cli import dev_server_manager as _dsm
+    return {"projects": _dsm.list_runtimes_by_project()}
+
+
 @app.get("/api/dev-server")
 async def dev_server_list(request: Request, session_key: str = ""):
     """List known dev servers for a session (or all running servers when

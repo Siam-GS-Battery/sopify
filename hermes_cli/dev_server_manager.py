@@ -234,6 +234,12 @@ class DevServerSpec:
     `command` / `cwd` are intent — what was run to start this. Used for
     revive on session re-activation. Both come from the agent's tool call
     args at first detection (parsed in `register_detected_url`).
+
+    ``vibe_project`` (PR-007) is the Vibe Code project name that owns this
+    session, or None for Panel / non-Vibe sessions. Used by
+    ``GET /api/vibe/runtimes`` to group running servers by project so the
+    UI can show which projects have backgrounded runtimes when the user
+    switches projects.
     """
 
     session_key: str
@@ -248,6 +254,7 @@ class DevServerSpec:
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
     last_error: Optional[str] = None
+    vibe_project: Optional[str] = None
 
 
 # session_key → list of specs. Most-recent first.
@@ -296,7 +303,25 @@ def _spec_to_dict(s: DevServerSpec) -> dict:
         "first_seen": s.first_seen,
         "last_seen": s.last_seen,
         "last_error": s.last_error,
+        "vibe_project": s.vibe_project,
     }
+
+
+def list_runtimes_by_project() -> dict[str, list[dict]]:
+    """Group every spec (any status) by its ``vibe_project`` name.
+
+    Used by ``GET /api/vibe/runtimes`` (PR-007) so the dashboard can show
+    which Vibe Code projects have backgrounded runtimes. Specs with no
+    project (Panel chat, PTY sessions) are omitted from the result.
+    """
+    out: dict[str, list[dict]] = {}
+    with _registry_lock:
+        for specs in _registry.values():
+            for s in specs:
+                if not s.vibe_project:
+                    continue
+                out.setdefault(s.vibe_project, []).append(_spec_to_dict(s))
+    return out
 
 
 def register_detected_url(
@@ -306,6 +331,7 @@ def register_detected_url(
     *,
     command_hint: Optional[str] = None,
     cwd_hint: Optional[str] = None,
+    vibe_project: Optional[str] = None,
 ) -> DevServerSpec:
     """Called from the gateway's tool-output watcher when we see a localhost
     URL printed by the agent. Resolves PID/PGID via /proc; if process is on
@@ -313,6 +339,12 @@ def register_detected_url(
     the spec but pid/pgid stay None — kill() will be a no-op for that case.
 
     Idempotent: same (session, port) → updates last_seen, doesn't dupe.
+
+    ``vibe_project`` (PR-007) attributes this runtime to a Vibe Code project
+    so the /api/vibe/runtimes endpoint can group servers by project. Once
+    set, subsequent registrations DON'T overwrite to a falsy value — a
+    session that later loses its project binding (rare) keeps the original
+    attribution so background runtimes don't disappear from the registry.
     """
     if not session_key:
         return _make_orphan_spec(port, url)
@@ -332,6 +364,8 @@ def register_detected_url(
                     existing.command = command_hint
                 if cwd_hint and not existing.cwd:
                     existing.cwd = cwd_hint
+                if vibe_project and not existing.vibe_project:
+                    existing.vibe_project = vibe_project
                 return existing
         spec = DevServerSpec(
             session_key=session_key,
@@ -342,6 +376,7 @@ def register_detected_url(
             pgid=pgid,
             command=command_hint,
             cwd=cwd_hint,
+            vibe_project=vibe_project,
         )
         specs.append(spec)
         return spec
@@ -527,6 +562,14 @@ def _refresh_status(session_key: str) -> None:
 DetectCallback = "Callable[[str, dict], None]"
 _emit_callback: Optional[object] = None
 
+# PR-007 — the poller doesn't see gateway state directly, so the gateway
+# wires a lookup callback here at startup: session_key → vibe_project
+# (or None). Used to backfill the project attribution for runtimes the
+# poller discovers (background `&`, deferred prints, etc.). When unset
+# the poller registers with vibe_project=None, which is correct for
+# Panel / pre-PR-004 callers.
+_project_lookup_callback: Optional[object] = None
+
 # Snapshot of "ports we've already announced" so each poll iteration only
 # reacts to NEW listeners. Reset when the active session changes.
 _poller_known_ports: set[int] = set()
@@ -541,6 +584,15 @@ def set_detect_callback(cb) -> None:
     runs, registry still updates, just no live event."""
     global _emit_callback
     _emit_callback = cb
+
+
+def set_project_lookup_callback(cb) -> None:
+    """Gateway wires a ``session_key → vibe_project | None`` lookup here so
+    the poller can attribute newly-discovered runtimes to the right Vibe
+    Code project. Called once at FastAPI startup; subprocess-mode gateways
+    skip this (poller registers vibe_project=None, harmless for Panel)."""
+    global _project_lookup_callback
+    _project_lookup_callback = cb
 
 
 def start_poller(interval: float = 2.0) -> None:
@@ -600,7 +652,15 @@ def _poll_loop(interval: float) -> None:
             if already:
                 continue
             url = f"http://localhost:{port}/"
-            spec = register_detected_url(active_key, port, url)
+            # PR-007 — attribute poller-discovered runtimes to a project
+            # when the gateway has registered a lookup callback.
+            project = None
+            if _project_lookup_callback is not None:
+                try:
+                    project = _project_lookup_callback(active_key)  # type: ignore[misc]
+                except Exception as e:
+                    _log.debug("project lookup callback failed: %s", e)
+            spec = register_detected_url(active_key, port, url, vibe_project=project)
             if _emit_callback is not None:
                 try:
                     _emit_callback(  # type: ignore[misc]
