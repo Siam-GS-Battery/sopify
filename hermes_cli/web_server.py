@@ -5558,40 +5558,147 @@ async def vibe_write_planning(
     return {"ok": True, "project": marker}
 
 
+# Hard ceiling on how long the security-review subprocess may run before
+# we give up and 504 the request. Thorough scans on bigger Vibe-Code
+# projects (form-registration with file upload, lots of pages) genuinely
+# take a few minutes; small ones finish in well under a minute.
+_VIBE_SECURITY_REVIEW_TIMEOUT_S: int = 900
+
+
 @app.post("/api/vibe/projects/{name}/security-review")
 async def vibe_security_review(name: str, request: Request):
-    """Run the security review and persist the result to SECURITY_REVIEW.md.
+    """Run the claude-code-security-review skill against the project and
+    persist the resulting markdown to SECURITY_REVIEW.md.
 
-    Stubbed for now: writes a placeholder report. A future iteration will
-    invoke the `security-review` skill against the project directory and
-    capture its output here. The phase stays at 'security' so the user
-    can read the report before accepting the IT approve step.
+    Implementation: spawns `hermes --oneshot` as a subprocess scoped to the
+    project directory, passing it a prompt that embeds the vendored
+    SKILL.md plus a short task brief. The agent uses its own file-reading
+    tools (Glob / Read) against the project tree, then writes the
+    findings to SECURITY_REVIEW.md per the skill's REQUIRED OUTPUT FORMAT.
+    Subprocess isolation keeps the web_server process clean (no global
+    YOLO/logging side effects) and gives us a hard timeout.
+
+    The endpoint does NOT advance the phase past `security` — the user
+    reads the report in the SecurityPane and approves through to `done`
+    (or rolls back to `improvement` to fix issues and re-run).
     """
     _require_token(request)
     d = _vibe_project_dir(name)
     marker = _vibe_read_marker(d)
-    report = (
-        "# Security Review\n\n"
-        "_Automated security review for this Vibe Code project._\n\n"
-        f"- Project: **{marker.get('name')}**\n"
-        f"- Mode: **{marker.get('mode')}**\n"
-        f"- Add-ons: {', '.join(marker.get('add_ons') or []) or '—'}\n\n"
-        "## Findings\n\n"
-        "_(No automated findings yet — this is the stub report. The real\n"
-        "security-review skill will replace this output in a follow-up.)_\n\n"
-        "## Next steps\n\n"
-        "Review the project files manually for:\n"
-        "- Hardcoded secrets / API keys\n"
-        "- Unvalidated input on form/upload endpoints\n"
-        "- Missing auth checks on protected routes\n"
-        "- CORS / cookie / CSRF posture\n"
+
+    skill_path = (
+        PROJECT_ROOT
+        / "skills"
+        / "red-teaming"
+        / "claude-code-security-review"
+        / "SKILL.md"
     )
-    (d / "SECURITY_REVIEW.md").write_text(report, encoding="utf-8")
-    # Phase stays at "security" until the user accepts and advances.
+    if not skill_path.is_file():
+        raise HTTPException(
+            status_code=500,
+            detail="claude-code-security-review skill not vendored at "
+            "skills/red-teaming/claude-code-security-review/SKILL.md",
+        )
+    skill_body = skill_path.read_text(encoding="utf-8")
+
+    prompt = (
+        f"You are running a security review of the Sopify Vibe Code project "
+        f"located at `{d}`.\n\n"
+        f"## Skill: claude-code-security-review\n\n"
+        f"{skill_body}\n\n"
+        f"## Task for this run\n\n"
+        f"1. Use Glob + Read to walk every relevant source file under "
+        f"`{d}` (`.ts`, `.tsx`, `.js`, `.py`, `.sql`, and configs). Do not "
+        f"run shell commands to reproduce vulnerabilities; reading is enough.\n"
+        f"2. Apply the skill methodology above to find HIGH and MEDIUM "
+        f"severity findings at confidence ≥ 8. Apply the HARD EXCLUSIONS.\n"
+        f"3. Write the markdown report to `{d}/SECURITY_REVIEW.md` using "
+        f"the skill's REQUIRED OUTPUT FORMAT exactly (one `# Vuln N: ...` "
+        f"heading per finding, severity / description / exploit / fix).\n"
+        f"4. After writing the file, your final reply must be a single line "
+        f"in this exact shape: `Done — wrote SECURITY_REVIEW.md with N findings.`\n"
+    )
+
+    hermes_bin = shutil.which("hermes")
+    if not hermes_bin:
+        raise HTTPException(
+            status_code=500,
+            detail="`hermes` binary not on PATH; cannot spawn the oneshot agent",
+        )
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            hermes_bin,
+            "--oneshot",
+            prompt,
+            cwd=str(d),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"failed to spawn hermes --oneshot: {exc}",
+        )
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(), timeout=_VIBE_SECURITY_REVIEW_TIMEOUT_S,
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"security review timed out after "
+                f"{_VIBE_SECURITY_REVIEW_TIMEOUT_S}s"
+            ),
+        )
+
+    stdout_text = stdout_bytes.decode("utf-8", errors="replace")
+    stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+
+    if proc.returncode != 0:
+        # Hermes oneshot already silences stdout/stderr from the agent for
+        # display purposes, so a non-zero exit usually means a startup or
+        # provider error rather than an in-tool failure. Surface a slice of
+        # stderr (and stdout as fallback) for the UI to render.
+        snippet = (stderr_text or stdout_text or "<no output>")[:800]
+        raise HTTPException(
+            status_code=500,
+            detail=f"hermes --oneshot exit {proc.returncode}: {snippet}",
+        )
+
+    report_file = d / "SECURITY_REVIEW.md"
+    if report_file.is_file():
+        report = report_file.read_text(encoding="utf-8")
+    else:
+        # Agent finished cleanly but didn't write the report — usually means
+        # the model decided there was nothing to flag and just printed a
+        # short status line. Persist that as the report so the UI has
+        # something to display and the file exists for the Done summary.
+        body = stdout_text.strip() or "_(no findings reported)_"
+        report = (
+            "# Security Review\n\n"
+            "_The agent finished without writing a structured report. Raw "
+            "final output below — re-run if you expected findings._\n\n"
+            f"```\n{body[:8000]}\n```\n"
+        )
+        report_file.write_text(report, encoding="utf-8")
+
     if marker.get("phase") != "security":
         marker["phase"] = "security"
         _vibe_write_marker(d, marker)
-    _log.info("vibe project %s: SECURITY_REVIEW.md written (stub)", name)
+
+    _log.info(
+        "vibe project %s: security review complete (%d bytes, exit %d)",
+        name,
+        len(report),
+        proc.returncode,
+    )
     return {"ok": True, "project": marker, "report": report}
 
 
