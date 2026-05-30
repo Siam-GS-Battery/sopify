@@ -5420,6 +5420,52 @@ _VIBE_PHASE_SKILLS: dict[str, tuple[str, ...]] = {
     "security":    ("red-teaming/claude-code-security-review",),
 }
 
+# Default model per phase per spec/VIBE_CODE_PANEL_SPEC.md §2-§3.
+# Stored as ``<provider>/<model>`` strings so the resolver can split the pair
+# without a second lookup. These are the *family-level* defaults; the active
+# SKU can be tuned via MODEL_SELECTION.md without touching this dict. The
+# per-project override (``project.json:model_per_phase``) wins when set.
+_VIBE_PHASE_MODEL_DEFAULTS: dict[str, str] = {
+    "brainstorm":  "anthropic/claude-sonnet-4-6",
+    "design":      "anthropic/claude-sonnet-4-6",
+    "backend":     "alibaba/qwen3-coder-plus",
+    "improvement": "alibaba/qwen3-coder-plus",
+    "security":    "anthropic/claude-sonnet-4-6",
+    "approve":     "alibaba/qwen-plus",
+}
+
+# Curated catalog returned by ``GET /api/vibe/projects/{name}/models`` so the
+# stepper's model picker has a finite, sensible list — not the full provider
+# catalog (which has dozens of variants and confuses non-engineer users).
+# Adding a new entry here is the canonical way to expose a new model to the
+# Vibe Code picker; keep the list short.
+_VIBE_AVAILABLE_MODELS: list[dict] = [
+    # Anthropic — taste/security/scope
+    {"id": "anthropic/claude-opus-4-7",   "provider": "anthropic", "label": "Claude Opus 4.7"},
+    {"id": "anthropic/claude-sonnet-4-6", "provider": "anthropic", "label": "Claude Sonnet 4.6"},
+    {"id": "anthropic/claude-haiku-4-5",  "provider": "anthropic", "label": "Claude Haiku 4.5"},
+    # Alibaba Model Studio — coding/general/OSS
+    {"id": "alibaba/qwen3-coder-plus",    "provider": "alibaba",   "label": "Qwen3 Coder Plus"},
+    {"id": "alibaba/qwen3.6-plus",        "provider": "alibaba",   "label": "Qwen 3.6 Plus"},
+    {"id": "alibaba/qwen-plus",           "provider": "alibaba",   "label": "Qwen Plus"},
+    {"id": "alibaba/kimi-k2.6",           "provider": "alibaba",   "label": "Kimi K2.6 (via Alibaba)"},
+    {"id": "alibaba/deepseek-v4-pro",     "provider": "alibaba",   "label": "DeepSeek V4 Pro (via Alibaba)"},
+]
+
+
+def resolve_vibe_phase_model(marker: dict, phase: Optional[str] = None) -> str:
+    """Return the effective ``<provider>/<model>`` string for a project phase.
+
+    Looks up ``model_per_phase`` on the marker first; falls back to
+    ``_VIBE_PHASE_MODEL_DEFAULTS``. If ``phase`` is omitted, uses the marker's
+    current phase. PR-004 will call this when starting agent sessions so the
+    chat lifts off with the right model wired in.
+    """
+    if phase is None:
+        phase = marker.get("phase", "brainstorm")
+    overrides = marker.get("model_per_phase") or {}
+    return overrides.get(phase) or _VIBE_PHASE_MODEL_DEFAULTS.get(phase, _VIBE_PHASE_MODEL_DEFAULTS["brainstorm"])
+
 
 def _vibe_project_dir(name: str) -> Path:
     """Resolve a project dir, rejecting traversal / unknown names."""
@@ -5591,6 +5637,74 @@ async def vibe_update_project(name: str, body: VibeProjectPatch, request: Reques
         marker["phase"] = body.phase
     _vibe_write_marker(d, marker)
     return {"ok": True, "project": marker}
+
+
+class VibeModelUpdate(BaseModel):
+    """Single-phase override. Empty/omitted ``model`` resets to default."""
+    phase: str
+    model: Optional[str] = None
+
+
+@app.get("/api/vibe/projects/{name}/models")
+async def vibe_get_models(name: str, request: Request):
+    """Return the per-phase model assignment for a project.
+
+    Shape::
+
+        {
+            "defaults":  {phase: "<provider>/<model>", ...},
+            "overrides": {phase: "<provider>/<model>", ...},   # subset of phases
+            "effective": {phase: "<provider>/<model>", ...},   # override > default
+            "available": [{"id", "provider", "label"}, ...]
+        }
+
+    Frontend (PR-003) renders ``effective`` next to each step in the rail and
+    offers ``available`` as the picker dropdown options.
+    """
+    _require_token(request)
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    overrides = marker.get("model_per_phase") or {}
+    effective = {
+        phase: overrides.get(phase) or _VIBE_PHASE_MODEL_DEFAULTS.get(phase, "")
+        for phase in _VIBE_PHASES
+    }
+    return {
+        "defaults": _VIBE_PHASE_MODEL_DEFAULTS,
+        "overrides": overrides,
+        "effective": effective,
+        "available": _VIBE_AVAILABLE_MODELS,
+    }
+
+
+@app.put("/api/vibe/projects/{name}/models")
+async def vibe_set_model(name: str, body: VibeModelUpdate, request: Request):
+    """Override one phase's model, or reset to default by passing empty model.
+
+    No model-catalog validation here — keeping the picker flexible to add new
+    SKUs in MODEL_SELECTION.md without code changes. The agent will surface
+    a clear error on first call if the SKU is bogus.
+    """
+    _require_token(request)
+    if body.phase not in _VIBE_PHASES:
+        raise HTTPException(status_code=400, detail=f"unknown phase: {body.phase}")
+    d = _vibe_project_dir(name)
+    marker = _vibe_read_marker(d)
+    overrides = dict(marker.get("model_per_phase") or {})
+    model = (body.model or "").strip()
+    if model:
+        overrides[body.phase] = model
+    else:
+        # Empty value = explicit reset → drop from overrides so the default wins.
+        overrides.pop(body.phase, None)
+    marker["model_per_phase"] = overrides
+    _vibe_write_marker(d, marker)
+    effective = {
+        phase: overrides.get(phase) or _VIBE_PHASE_MODEL_DEFAULTS.get(phase, "")
+        for phase in _VIBE_PHASES
+    }
+    _log.info("vibe project %s: model_per_phase[%s] = %s", name, body.phase, model or "<default>")
+    return {"ok": True, "overrides": overrides, "effective": effective}
 
 
 class VibeRequirementsAccept(BaseModel):
