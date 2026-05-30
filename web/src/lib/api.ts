@@ -560,6 +560,19 @@ export const api = {
     fetchJSON<VibeUploadListResponse>(
       `/api/vibe/projects/${encodeURIComponent(name)}/uploads`,
     ),
+  getVibeModels: (name: string) =>
+    fetchJSON<VibeModelsResponse>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/models`,
+    ),
+  setVibeModel: (name: string, phase: string, model: string) =>
+    fetchJSON<VibeModelUpdateResponse>(
+      `/api/vibe/projects/${encodeURIComponent(name)}/models`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phase, model }),
+      },
+    ),
 };
 
 export interface VibeExample {
@@ -645,6 +658,25 @@ export interface VibeUploadResponse {
 
 export interface VibeUploadListResponse {
   files: VibeUploadEntry[];
+}
+
+export interface VibeAvailableModel {
+  id: string;        // "provider/model" e.g. "anthropic/claude-sonnet-4-6"
+  provider: string;
+  label: string;     // human-readable
+}
+
+export interface VibeModelsResponse {
+  defaults: Record<string, string>;   // phase -> "provider/model"
+  overrides: Record<string, string>;  // subset of phases the user customised
+  effective: Record<string, string>;  // overrides merged onto defaults
+  available: VibeAvailableModel[];
+}
+
+export interface VibeModelUpdateResponse {
+  ok: boolean;
+  overrides: Record<string, string>;
+  effective: Record<string, string>;
 }
 
 export interface FileEntry {

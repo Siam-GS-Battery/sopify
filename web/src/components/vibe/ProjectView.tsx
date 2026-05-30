@@ -17,6 +17,7 @@ import { Typography } from "@/components/NouiTypography";
 import { ChatThread } from "@/components/chat/ChatThread";
 import { Composer } from "@/components/chat/Composer";
 import {
+  UI_STEP_TO_BACKEND_PHASE,
   VIBE_STEPS,
   VerticalStepper,
   type VibeStepKey,
@@ -25,6 +26,7 @@ import { useBelowBreakpoint } from "@/hooks/useBelowBreakpoint";
 import { useChatStream } from "@/hooks/useChatStream";
 import { api } from "@/lib/api";
 import type {
+  VibeModelsResponse,
   VibePhase,
   VibeProjectGetResponse,
   VibeProjectMarker,
@@ -91,6 +93,60 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
     return done;
   }, [stepperKey]);
 
+  // Per-phase model selection — fetched from the backend so the user can see
+  // (and change) which model drives each phase. Failure is non-fatal: the
+  // stepper just renders without model badges.
+  const [vibeModels, setVibeModels] = useState<VibeModelsResponse | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getVibeModels(project.name)
+      .then((r) => {
+        if (!cancelled) setVibeModels(r);
+      })
+      .catch(() => {
+        if (!cancelled) setVibeModels(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project.name]);
+
+  // Stepper renders per UI step key (7 entries). Backend phase keys are 6
+  // — UI `setup` has no backend mapping, UI `done` maps to backend `approve`.
+  // Project up to PR-002 the marker may not yet have a model_per_phase field,
+  // so fall back to `defaults` from the GET response.
+  const phaseModels = useMemo<Record<string, string>>(() => {
+    if (!vibeModels) return {};
+    const out: Record<string, string> = {};
+    for (const [uiKey, backendPhase] of Object.entries(UI_STEP_TO_BACKEND_PHASE)) {
+      if (!backendPhase) continue; // skip 'setup'
+      const eff = vibeModels.effective[backendPhase];
+      if (eff) out[uiKey] = eff;
+    }
+    return out;
+  }, [vibeModels]);
+
+  const onModelChange = useCallback(
+    async (uiStepKey: string, modelId: string) => {
+      const backendPhase = UI_STEP_TO_BACKEND_PHASE[uiStepKey as VibeStepKey];
+      if (!backendPhase) return;
+      try {
+        const res = await api.setVibeModel(project.name, backendPhase, modelId);
+        // Merge new effective map into existing response so other fields
+        // (defaults, available) stay populated.
+        setVibeModels((prev) =>
+          prev
+            ? { ...prev, overrides: res.overrides, effective: res.effective }
+            : prev,
+        );
+      } catch {
+        // Quiet — the badge stays on the previous value if the PUT failed.
+      }
+    },
+    [project.name],
+  );
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 pb-4 normal-case lg:flex-row lg:gap-6">
       <div className="flex min-w-0 min-h-0 flex-1 flex-col gap-3">
@@ -152,6 +208,9 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
             steps={VIBE_STEPS}
             currentKey={stepperKey}
             doneKeys={doneKeys}
+            phaseModels={phaseModels}
+            availableModels={vibeModels?.available}
+            onModelChange={onModelChange}
           />
         </div>
       </aside>
