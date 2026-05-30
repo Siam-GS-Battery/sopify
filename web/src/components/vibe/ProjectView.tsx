@@ -60,7 +60,7 @@ function phaseToStepKey(phase: VibePhase): VibeStepKey {
   return "done"; // approve
 }
 
-const PROJECT_DONE_KEYS: VibeStepKey[] = ["name", "theme", "addons"];
+const PROJECT_DONE_KEYS: VibeStepKey[] = ["setup"];
 
 export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
   const {

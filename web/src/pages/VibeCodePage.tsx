@@ -12,11 +12,7 @@ import { Switch } from "@nous-research/ui/ui/components/switch";
 import { Typography } from "@/components/NouiTypography";
 import { ProjectView } from "@/components/vibe/ProjectView";
 import { ThemeCard, type ThemeOption } from "@/components/vibe/ThemeCard";
-import {
-  VIBE_STEPS,
-  VerticalStepper,
-  type VibeStepKey,
-} from "@/components/vibe/VerticalStepper";
+import { VIBE_STEPS, VerticalStepper } from "@/components/vibe/VerticalStepper";
 import { api } from "@/lib/api";
 import type {
   VibeProjectGetResponse,
@@ -416,22 +412,6 @@ function CreateForm({
   const canSubmit =
     nameValid && mode !== null && status.kind !== "submitting";
 
-  // Stepper progress derived from form state. Setup is one screen, but the
-  // active step shifts as the user fills it in so the rail mirrors progress.
-  const { currentKey, doneKeys } = useMemo<{
-    currentKey: VibeStepKey;
-    doneKeys: VibeStepKey[];
-  }>(() => {
-    const done: VibeStepKey[] = [];
-    if (nameValid) done.push("name");
-    if (mode) done.push("theme");
-    let current: VibeStepKey;
-    if (!nameValid) current = "name";
-    else if (!mode) current = "theme";
-    else current = "addons";
-    return { currentKey: current, doneKeys: done };
-  }, [nameValid, mode]);
-
   const onSubmit = useCallback(async () => {
     if (!canSubmit || mode === null) return;
     setStatus({ kind: "submitting" });
@@ -540,8 +520,8 @@ function CreateForm({
         <div className="sticky top-4 rounded-lg border border-border/60 bg-transparent px-5 py-5">
           <VerticalStepper
             steps={VIBE_STEPS}
-            currentKey={currentKey}
-            doneKeys={doneKeys}
+            currentKey="setup"
+            doneKeys={[]}
           />
         </div>
       </aside>
