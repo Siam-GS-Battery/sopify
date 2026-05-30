@@ -5385,21 +5385,17 @@ def _vibe_render_brief(q: VibeQuestions) -> str:
     )
 
 
-# Ordered phase machine. The frontend stepper renders these in this order
-# and downstream phase-advance endpoints can validate transitions against it.
-#
-# Six phases, each with a matching `prompts/vibe/phases/<name>.md` that the
-# system-prompt composer injects when the project is at that phase. Two
-# phases (design, security) also pre-load a vendored skill — see
-# `_VIBE_PHASE_SKILLS` below.
-_VIBE_PHASES: list[str] = [
-    "brainstorm",   # chat → REQUIREMENTS.md
-    "design",       # chat + iframe → DESIGN.md, frontend-design skill loaded
-    "backend",      # chat → DATABASE.md + API.md, agent stands up Supabase + wiring
-    "improvement",  # chat → free iteration / polish
-    "security",     # claude-code-security-review skill → SECURITY_REVIEW.md
-    "approve",      # done state — summary view, no agent activity
-]
+# Ordered phase machine, per-phase model defaults, and the available-model
+# catalog live in ``hermes_cli.vibe_models`` so the WebSocket gateway can
+# import the same constants without dragging in this FastAPI module. The
+# ``_VIBE_*`` aliases below are kept for the rest of this file plus the
+# PR-002 test suite, which references the underscore-prefixed names.
+from hermes_cli.vibe_models import (
+    VIBE_PHASES as _VIBE_PHASES,
+    VIBE_PHASE_MODEL_DEFAULTS as _VIBE_PHASE_MODEL_DEFAULTS,
+    VIBE_AVAILABLE_MODELS as _VIBE_AVAILABLE_MODELS,
+    resolve_vibe_phase_model,
+)
 
 # Skills auto-injected into the system prompt when the project is in the
 # matching phase. The SKILL.md body is inlined so the agent has the
@@ -5419,53 +5415,6 @@ _VIBE_PHASE_SKILLS: dict[str, tuple[str, ...]] = {
     "improvement": ("sopify-sdlc-design", "sopify-sdlc-database", "sopify-sdlc-backend"),
     "security":    ("red-teaming/claude-code-security-review",),
 }
-
-# Default model per phase per spec/VIBE_CODE_PANEL_SPEC.md §2-§3.
-# Stored as ``<provider>/<model>`` strings so the resolver can split the pair
-# without a second lookup. These are the *family-level* defaults; the active
-# SKU can be tuned via MODEL_SELECTION.md without touching this dict. The
-# per-project override (``project.json:model_per_phase``) wins when set.
-_VIBE_PHASE_MODEL_DEFAULTS: dict[str, str] = {
-    "brainstorm":  "anthropic/claude-sonnet-4-6",
-    "design":      "anthropic/claude-sonnet-4-6",
-    "backend":     "alibaba/qwen3-coder-plus",
-    "improvement": "alibaba/qwen3-coder-plus",
-    "security":    "anthropic/claude-sonnet-4-6",
-    "approve":     "alibaba/qwen-plus",
-}
-
-# Curated catalog returned by ``GET /api/vibe/projects/{name}/models`` so the
-# stepper's model picker has a finite, sensible list — not the full provider
-# catalog (which has dozens of variants and confuses non-engineer users).
-# Adding a new entry here is the canonical way to expose a new model to the
-# Vibe Code picker; keep the list short.
-_VIBE_AVAILABLE_MODELS: list[dict] = [
-    # Anthropic — taste/security/scope
-    {"id": "anthropic/claude-opus-4-7",   "provider": "anthropic", "label": "Claude Opus 4.7"},
-    {"id": "anthropic/claude-sonnet-4-6", "provider": "anthropic", "label": "Claude Sonnet 4.6"},
-    {"id": "anthropic/claude-haiku-4-5",  "provider": "anthropic", "label": "Claude Haiku 4.5"},
-    # Alibaba Model Studio — coding/general/OSS
-    {"id": "alibaba/qwen3-coder-plus",    "provider": "alibaba",   "label": "Qwen3 Coder Plus"},
-    {"id": "alibaba/qwen3.6-plus",        "provider": "alibaba",   "label": "Qwen 3.6 Plus"},
-    {"id": "alibaba/qwen-plus",           "provider": "alibaba",   "label": "Qwen Plus"},
-    {"id": "alibaba/kimi-k2.6",           "provider": "alibaba",   "label": "Kimi K2.6 (via Alibaba)"},
-    {"id": "alibaba/deepseek-v4-pro",     "provider": "alibaba",   "label": "DeepSeek V4 Pro (via Alibaba)"},
-]
-
-
-def resolve_vibe_phase_model(marker: dict, phase: Optional[str] = None) -> str:
-    """Return the effective ``<provider>/<model>`` string for a project phase.
-
-    Looks up ``model_per_phase`` on the marker first; falls back to
-    ``_VIBE_PHASE_MODEL_DEFAULTS``. If ``phase`` is omitted, uses the marker's
-    current phase. PR-004 will call this when starting agent sessions so the
-    chat lifts off with the right model wired in.
-    """
-    if phase is None:
-        phase = marker.get("phase", "brainstorm")
-    overrides = marker.get("model_per_phase") or {}
-    return overrides.get(phase) or _VIBE_PHASE_MODEL_DEFAULTS.get(phase, _VIBE_PHASE_MODEL_DEFAULTS["brainstorm"])
-
 
 def _vibe_project_dir(name: str) -> Path:
     """Resolve a project dir, rejecting traversal / unknown names."""

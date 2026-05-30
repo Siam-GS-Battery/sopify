@@ -274,7 +274,7 @@ function ChatPanel({
     error,
     send,
     interrupt,
-  } = useChatStream(project.session_id ?? null);
+  } = useChatStream(project.session_id ?? null, project.name);
   const kickoffSentRef = useRef(false);
 
   // Bubble devServers up to whichever pane wraps us (BuildingPane reads it
