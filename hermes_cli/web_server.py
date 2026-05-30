@@ -5143,10 +5143,33 @@ _VIBE_ADDON_KEYS: set[str] = {
 _VIBE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
+class VibeQuestions(BaseModel):
+    """User answers from the CreateForm scoping questions (Q1-Q4).
+
+    The frontend sends already-human-readable labels for inputs/outputs/
+    exclusions (e.g. "Type it manually" rather than "manual") because they
+    land verbatim in brief.md — keeps the agent prompt human-readable and
+    decouples backend from label wording.
+    """
+    purpose: str
+    access_mode: str  # "solo" | "team-shared" | "team-isolated"
+    inputs: List[str] = []
+    outputs: List[str] = []
+    exclusions: List[str] = []
+
+
+_VIBE_ACCESS_LABELS = {
+    "solo": "Single user — no login, no per-user isolation.",
+    "team-shared": "Team — everyone sees the same data, gated behind a login.",
+    "team-isolated": "Team — each person sees only their own data (per-user isolation).",
+}
+
+
 class VibeProjectCreate(BaseModel):
     name: str
     mode: str
     add_ons: List[str] = []
+    questions: Optional[VibeQuestions] = None
 
 
 @app.get("/api/vibe/examples")
@@ -5306,11 +5329,60 @@ async def vibe_create_project(body: VibeProjectCreate, request: Request):
         (project_dir / "project.json").write_text(
             json.dumps(marker, indent=2) + "\n", encoding="utf-8",
         )
+        if body.questions:
+            (project_dir / "brief.md").write_text(
+                _vibe_render_brief(body.questions), encoding="utf-8",
+            )
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    _log.info("vibe project created: %s (mode=%s, add_ons=%s)", name, body.mode, marker["add_ons"])
+    _log.info("vibe project created: %s (mode=%s, add_ons=%s, brief=%s)",
+              name, body.mode, marker["add_ons"], bool(body.questions))
     return {"ok": True, "name": name, "path": str(project_dir), "project": marker}
+
+
+def _vibe_render_brief(q: VibeQuestions) -> str:
+    """Render the user's CreateForm answers as a markdown brief the
+    brainstorm agent reads as initial context (see prompts/vibe/phases/
+    brainstorm.md). Lives alongside REQUIREMENTS.md but does NOT replace
+    it — REQUIREMENTS.md stays the agent-curated source of truth, brief.md
+    is the user's raw answers preserved verbatim."""
+    access_line = _VIBE_ACCESS_LABELS.get(
+        q.access_mode, f"({q.access_mode})",
+    )
+
+    def _bullet_list(items: List[str], empty_note: str) -> str:
+        if not items:
+            return f"_{empty_note}_"
+        return "\n".join(f"- {it}" for it in items)
+
+    return (
+        "# Project brief\n"
+        "\n"
+        "> Generated from the user's answers in the Create Project form.\n"
+        "> The brainstorm agent reads this as initial context — refine via\n"
+        "> chat, then write the final scope into REQUIREMENTS.md.\n"
+        "\n"
+        "## Purpose\n"
+        "\n"
+        f"{q.purpose.strip()}\n"
+        "\n"
+        "## Users & access\n"
+        "\n"
+        f"{access_line}\n"
+        "\n"
+        "## How data gets in\n"
+        "\n"
+        f"{_bullet_list(q.inputs, 'No input modalities selected.')}\n"
+        "\n"
+        "## How data comes back out\n"
+        "\n"
+        f"{_bullet_list(q.outputs, 'No output modalities selected.')}\n"
+        "\n"
+        "## Explicit non-goals (NOT v1)\n"
+        "\n"
+        f"{_bullet_list(q.exclusions, 'No explicit non-goals declared — derive scope from the chat.')}\n"
+    )
 
 
 # Ordered phase machine. The frontend stepper renders these in this order
