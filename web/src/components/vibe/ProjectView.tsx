@@ -20,9 +20,9 @@ import { SecurityChecklist } from "@/components/vibe/SecurityChecklist";
 import {
   UI_STEP_TO_BACKEND_PHASE,
   VIBE_STEPS,
-  VerticalStepper,
   type VibeStepKey,
 } from "@/components/vibe/VerticalStepper";
+import { HorizontalStepper } from "@/components/vibe/HorizontalStepper";
 import { useBelowBreakpoint } from "@/hooks/useBelowBreakpoint";
 import { useChatStream } from "@/hooks/useChatStream";
 import { api } from "@/lib/api";
@@ -150,104 +150,78 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 pb-4 normal-case lg:flex-row lg:gap-6">
-      <div className="flex min-w-0 min-h-0 flex-1 flex-col gap-3">
-        <ProjectHeader project={project} onBack={onBack} />
-
-        <div className="flex min-h-0 flex-1 flex-col">
-          {project.phase === "brainstorm" && (
-            <BrainstormPane
-              project={project}
-              initialRequirements={requirements_md ?? ""}
-              onUpdated={onUpdated}
-              onRefresh={onRefresh}
-            />
-          )}
-          {project.phase === "design" && (
-            <DesignPane
-              project={project}
-              initialDesign={design_md ?? ""}
-              onUpdated={onUpdated}
-              onRefresh={onRefresh}
-            />
-          )}
-          {project.phase === "backend" && (
-            <BackendPane
-              project={project}
-              initialDatabase={database_md ?? ""}
-              initialApi={api_md ?? ""}
-              onUpdated={onUpdated}
-              onRefresh={onRefresh}
-            />
-          )}
-          {project.phase === "improvement" && (
-            <ImprovementPane
-              project={project}
-              onUpdated={onUpdated}
-              onRefresh={onRefresh}
-            />
-          )}
-          {project.phase === "security" && (
-            <SecurityPane
-              project={project}
-              initialReport={security_review_md ?? ""}
-              onUpdated={onUpdated}
-              onRefresh={onRefresh}
-            />
-          )}
-          {project.phase === "approve" && (
-            <DonePane data={data} />
-          )}
-        </div>
-      </div>
-
-      <aside
-        aria-label="Project progress"
-        className="hidden shrink-0 lg:block lg:w-[240px] xl:w-[260px]"
-      >
-        <div className="sticky top-4 rounded-lg border border-border/60 bg-background-base/40 px-5 py-5">
-          <VerticalStepper
-            steps={VIBE_STEPS}
-            currentKey={stepperKey}
-            doneKeys={doneKeys}
-            phaseModels={phaseModels}
-            availableModels={vibeModels?.available}
-            onModelChange={onModelChange}
-          />
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function ProjectHeader({
-  project,
-  onBack,
-}: {
-  project: VibeProjectMarker;
-  onBack: () => void;
-}) {
-  return (
-    <header className="flex items-center justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <Button ghost size="icon" onClick={onBack} aria-label="Back to projects">
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <div>
-          <Typography
-            mondwest
-            className="text-[1rem] font-bold uppercase tracking-[0.05em] text-midground"
+    <div className="flex min-h-0 flex-1 flex-col gap-3 pb-4 normal-case">
+      {/* Horizontal stepper replaces the old top header + right rail
+        * combo. Back button collapses into its left slot, phase badge
+        * into the right slot. Phase pane below gets the full width. */}
+      <HorizontalStepper
+        steps={VIBE_STEPS}
+        currentKey={stepperKey}
+        doneKeys={doneKeys}
+        phaseModels={phaseModels}
+        availableModels={vibeModels?.available}
+        onModelChange={onModelChange}
+        leftSlot={
+          <Button
+            ghost
+            size="icon"
+            onClick={onBack}
+            aria-label="Back to projects"
+            title={`Back to projects — ${project.name}`}
+            className="h-7 w-7"
           >
-            {project.name}
-          </Typography>
-          <p className="font-mono text-[0.7rem] text-muted-foreground/70">
-            {project.mode}
-            {project.add_ons.length > 0 ? ` · ${project.add_ons.join(", ")}` : ""}
-          </p>
-        </div>
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+        }
+        rightSlot={<Badge tone="secondary">{project.phase}</Badge>}
+      />
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        {project.phase === "brainstorm" && (
+          <BrainstormPane
+            project={project}
+            initialRequirements={requirements_md ?? ""}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
+          />
+        )}
+        {project.phase === "design" && (
+          <DesignPane
+            project={project}
+            initialDesign={design_md ?? ""}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
+          />
+        )}
+        {project.phase === "backend" && (
+          <BackendPane
+            project={project}
+            initialDatabase={database_md ?? ""}
+            initialApi={api_md ?? ""}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
+          />
+        )}
+        {project.phase === "improvement" && (
+          <ImprovementPane
+            project={project}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
+          />
+        )}
+        {project.phase === "security" && (
+          <SecurityPane
+            project={project}
+            initialReport={security_review_md ?? ""}
+            onUpdated={onUpdated}
+            onRefresh={onRefresh}
+          />
+        )}
+        {project.phase === "approve" && (
+          <DonePane data={data} />
+        )}
       </div>
-      <Badge tone="secondary">{project.phase}</Badge>
-    </header>
+    </div>
   );
 }
 
