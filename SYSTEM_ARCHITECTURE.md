@@ -65,7 +65,7 @@ Sopify is **GS Battery's branded fork of the Hermes AI agent**, run inside a Doc
 - The launcher delegates to **sbx** (`Docker Sandboxes`) which boots a persistent microVM-style container per cwd. Bind mounts: user cwd (rw), installed Sopify source (ro), `~/.hermes` (ro), `~/.sopify` (ro).
 - Inside the container, **Hermes web_server** (FastAPI, port `9119`) starts and serves the dashboard SPA + REST + WebSocket endpoints.
 - Inside the same container, a **TUI gateway** (`tui_gateway`) speaks JSON-RPC to drive the agent — spawned per chat session as a Python subprocess from a Node TUI parent.
-- The host launcher **publishes ports** 9119, 5173, 4173, 3000, 4321, 8000, 8080 from container → host loopback so the user's browser + agent dev servers are reachable from outside the sandbox.
+- The host launcher **publishes ports** 9119, 5173, 5174, 4173, 3000, 4321, 8000, 8080 from container → host loopback so the user's browser + agent dev servers are reachable from outside the sandbox.
 
 ```
 host browser ──HTTP──> 127.0.0.1:9119 ──sbx port-publish──> sandbox 9119 (web_server)
@@ -107,7 +107,7 @@ The launcher ([sopify](sopify-harness/sopify)) is a Python script (not a wheel e
 | `sopify doctor` | `plugins.sopify_core.doctor.run()` | host |
 | `sopify login` / `logout` / `env` | host credential management; writes `~/.hermes/.env`, `~/.sopify/auth.json` | host |
 | `sopify onboard` | host welcome flow | host |
-| **`sopify dashboard`** | auto-starts ENCM daemon, then `_delegate_to_hermes(["dashboard"], publish_ports=[9119, 5173, 4173, 3000, 4321, 8000, 8080])` | **inside sandbox** |
+| **`sopify dashboard`** | auto-starts ENCM daemon, then `_delegate_to_hermes(["dashboard"], publish_ports=[9119, 5173, 5174, 4173, 3000, 4321, 8000, 8080])` | **inside sandbox** |
 | `sopify chat` | `_delegate_to_hermes(argv)` | inside sandbox |
 | `sopify /vibe` / `/living` / `/code-with-you` | mode profile activation then delegate | sandbox (scaffolded) |
 | **`sopify start`** | `sopify_daemon.cli.dispatch(start)` — boots ENCM daemon | **host (foreground)** |
@@ -150,9 +150,9 @@ The publish thread ([sbx_launcher.py:270-389](sopify-harness/plugins/sopify_sand
 
 **Currently published for `sopify dashboard`** ([sopify:296-299](sopify-harness/sopify#L296-L299)):
 ```python
-[9119, 5173, 4173, 3000, 4321, 8000, 8080]
+[9119, 5173, 5174, 4173, 3000, 4321, 8000, 8080]
 ```
-Rationale: 9119 = dashboard; 5173/4173 = Vite dev/preview; 3000 = Next/CRA/Express; 4321 = Astro; 8000/8080 = generic Python/Java. Bound 127.0.0.1 so nothing leaks to LAN.
+Rationale: 9119 = dashboard; 5173 = Panel preview (fixed, VIBE_CODE_PANEL_SPEC §4); 5174 = Vibe Code preview (fixed, same §4); 4173 = Vite preview; 3000 = Next/CRA/Express; 4321 = Astro; 8000/8080 = generic Python/Java. Bound 127.0.0.1 so nothing leaks to LAN.
 
 ### 2.4 Inside the sandbox — `--host 0.0.0.0 --insecure --no-open`
 

@@ -60,7 +60,8 @@ _RESERVED_PORTS = frozenset({9119, 7777})
 
 # Range of ports we treat as dev-server candidates (must match the launcher's
 # publish list in `sopify`). Sets the upper bound for /proc scanning too.
-DEV_PORT_CANDIDATES = frozenset({5173, 4173, 3000, 4321, 8000, 8080})
+# 5173 = Panel (fixed), 5174 = Vibe Code (fixed) — see VIBE_CODE_PANEL_SPEC §4.
+DEV_PORT_CANDIDATES = frozenset({5173, 5174, 4173, 3000, 4321, 8000, 8080})
 
 
 def extract_dev_url(text: str) -> Optional[tuple[int, str]]:
