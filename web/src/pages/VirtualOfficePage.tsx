@@ -21,7 +21,6 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import { Badge } from "@nous-research/ui/ui/components/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Typography } from "@/components/NouiTypography";
 import { usePageHeader } from "@/contexts/usePageHeader";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +69,44 @@ function formatDate(day: string): string {
   } catch {
     return day;
   }
+}
+
+// API only returns days that had usage. Pad to the full requested window so
+// the bar chart always reads as a continuous time series instead of one
+// fat bar over today.
+function isoDay(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function emptyDay(day: string): AnalyticsDailyEntry {
+  return {
+    day,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    reasoning_tokens: 0,
+    estimated_cost: 0,
+    actual_cost: 0,
+    sessions: 0,
+    api_calls: 0,
+  };
+}
+
+function padDaily(
+  daily: AnalyticsDailyEntry[],
+  days: number,
+): AnalyticsDailyEntry[] {
+  const byDay = new Map(daily.map((d) => [d.day, d]));
+  const out: AnalyticsDailyEntry[] = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = isoDay(d);
+    out.push(byDay.get(key) ?? emptyDay(key));
+  }
+  return out;
 }
 
 function shortModelLabel(model: string): string {
@@ -165,10 +202,13 @@ function sessionToAgent(s: SessionInfo, idx: number): Agent {
       : ageSeconds < ACTIVE_WINDOW_SECONDS * 2
         ? "waiting"
         : "idle";
-  const shortId = s.id.slice(0, 6);
+  // Session IDs in the harness are time-prefixed (YYYYMM…), so the first
+  // few chars collide across most of a month. The trailing chars are the
+  // entropy-bearing portion — use them so each agent gets a unique label.
+  const tail = s.id.replace(/[^a-zA-Z0-9]/g, "").slice(-6).toUpperCase();
   return {
     id: s.id,
-    name: `Agent ${shortId.toUpperCase()}`,
+    name: `Agent ${tail || String(idx + 1).padStart(2, "0")}`,
     role: s.source ?? "Worker",
     status,
     model: s.model,
@@ -691,28 +731,14 @@ export default function VirtualOfficePage() {
   }, [days, loading, load, setAfterTitle, setEnd]);
 
   const totals = data?.totals;
-  const daily = data?.daily ?? [];
+  const daily = useMemo(
+    () => padDaily(data?.daily ?? [], days),
+    [data?.daily, days],
+  );
   const models = data?.by_model ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 pb-8 normal-case">
-      <header className="flex items-start gap-3">
-        <div className="rounded-lg border border-border/60 bg-background-base/40 p-2 text-midground">
-          <Briefcase className="h-5 w-5" />
-        </div>
-        <div>
-          <Typography
-            mondwest
-            className="font-bold text-[1.1rem] tracking-[0.05em] uppercase"
-          >
-            Dashboard
-          </Typography>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Token economy and a live look at every agent on the floor.
-          </p>
-        </div>
-      </header>
-
       {error && (
         <Card>
           <CardContent className="py-6 normal-case">
