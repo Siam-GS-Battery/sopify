@@ -532,13 +532,33 @@ function CreateForm({
   };
 
   const onSubmit = useCallback(async () => {
-    if (!canSubmit || mode === null) return;
+    if (!canSubmit || mode === null || accessMode === null) return;
     setStatus({ kind: "submitting" });
     try {
+      // Resolve human-readable labels for the brief.md the backend writes.
+      // We send labels (not ids) so the prose lands directly in markdown —
+      // see _vibe_render_brief() in hermes_cli/web_server.py.
+      const inputLabels = INPUT_OPTIONS
+        .filter((o) => inputs.has(o.id))
+        .map((o) => o.label);
+      const outputLabels = OUTPUT_OPTIONS
+        .filter((o) => outputs.has(o.id))
+        .map((o) => o.label);
+      const exclusionLabels = SCOPE_EXCLUSIONS
+        .filter((s) => exclusions.has(s.id))
+        .map((s) => s.label);
+
       const res = await api.createVibeProject({
         name,
         mode,
         add_ons: [...addOns],
+        questions: {
+          purpose: purpose.trim(),
+          access_mode: accessMode,
+          inputs: inputLabels,
+          outputs: outputLabels,
+          exclusions: exclusionLabels,
+        },
       });
       const projectName = res.project.name;
       const allFiles = [...uploads.csv, ...uploads.spec, ...uploads.image];
@@ -566,7 +586,7 @@ function CreateForm({
         message: e instanceof Error ? e.message : String(e),
       });
     }
-  }, [canSubmit, mode, name, addOns, uploads, onCreated]);
+  }, [canSubmit, mode, accessMode, name, addOns, uploads, purpose, inputs, outputs, exclusions, onCreated]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto pb-8 normal-case lg:flex-row lg:gap-8">

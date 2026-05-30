@@ -569,10 +569,21 @@ export interface VibeExample {
   image_url: string | null;
 }
 
+export interface VibeQuestions {
+  purpose: string;
+  /** "solo" | "team-shared" | "team-isolated" */
+  access_mode: string;
+  /** Human-readable labels, e.g. "Type it manually". */
+  inputs: string[];
+  outputs: string[];
+  exclusions: string[];
+}
+
 export interface VibeProjectCreateRequest {
   name: string;
   mode: string;
   add_ons: string[];
+  questions?: VibeQuestions;
 }
 
 export type VibePhase =
