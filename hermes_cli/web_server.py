@@ -5606,6 +5606,9 @@ class VibeProjectPatch(BaseModel):
     summary: Optional[str] = None
     session_id: Optional[str] = None
     phase: Optional[str] = None
+    # "claude_code" routes this project's chat to the Claude Code CLI; ""/
+    # "hermes"/"default" reverts to the Hermes agent. Omitted = unchanged.
+    engine: Optional[str] = None
 
 
 @app.patch("/api/vibe/projects/{name}")
@@ -5622,6 +5625,14 @@ async def vibe_update_project(name: str, body: VibeProjectPatch, request: Reques
         if body.phase not in _VIBE_PHASES:
             raise HTTPException(status_code=400, detail=f"unknown phase: {body.phase}")
         marker["phase"] = body.phase
+    if body.engine is not None:
+        eng = body.engine.strip()
+        if eng in ("", "hermes", "default"):
+            marker.pop("engine", None)          # revert to the Hermes default
+        elif eng == "claude_code":
+            marker["engine"] = "claude_code"
+        else:
+            raise HTTPException(status_code=400, detail=f"unknown engine: {body.engine}")
     _vibe_write_marker(d, marker)
     return {"ok": True, "project": marker}
 
