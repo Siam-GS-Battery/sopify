@@ -53,6 +53,7 @@ Most paths below are relative to `sopify-harness/` unless noted (`~/.hermes/`, `
 13. [Dev workflow & build pipeline](#13-dev-workflow--build-pipeline)
 14. [Known quirks & gotchas](#14-known-quirks--gotchas)
 15. [Model selection strategy](#15-model-selection-strategy)
+16. [Claude Code integration](#16-claude-code-integration)
 
 ---
 
@@ -1395,6 +1396,95 @@ Three places where staying on Anthropic is the right call even at premium cost:
 - **Pricing freshness** — numbers in MODEL_SELECTION.md are 2026-05 snapshots. Pin a refresh cadence (quarterly?) and a process for who updates it.
 - **Picker UX** — flipping the default away from Opus is a breaking expectation change for users who've memorised the picker order. Surface a one-time announcement or banner.
 - **Per-phase override telemetry** — once the phase machine pins per-phase models, the `/api/analytics/models` endpoint ([web_server.py:3315-3384](sopify-harness/hermes_cli/web_server.py#L3315)) should attribute spend by phase so we can verify the projected −70% to −80% holds in practice.
+
+---
+
+## 16. Claude Code integration
+
+Hermes is the orchestrator; Claude Code (the `claude` CLI) is the coding
+engine. The integration adds Claude Code as a second engine across **two
+surfaces**, without disturbing the existing Hermes paths.
+
+- **Surface A — Vibe Code (interactive):** a Vibe Code project's chat talks to
+  `claude` directly (no Hermes relay during iteration — avoids double token
+  cost and section overlap).
+- **Surface B — Panel/cron (headless):** the Hermes agent delegates a coding
+  task to `claude` via a tool, including from scheduled `hermes cron` jobs.
+
+### 16.1 Foundation (in the sandbox)
+
+- **Baked CLI** — `claude` (`@anthropic-ai/claude-code`, pinned via
+  `CLAUDE_CODE_VERSION`) is installed into the image at build time, not at
+  runtime (ENCM `no_proxy` would block a runtime `npm i -g`). See
+  [docker/sopify-sandbox/Dockerfile](sopify-harness/docker/sopify-sandbox/Dockerfile).
+- **Credential + base URL** — `_link_hermes_into_sandbox`
+  ([sbx_launcher.py](sopify-harness/plugins/sopify_sandbox/sbx_launcher.py))
+  appends a login-shell block to `~/.profile` that sources `~/.hermes/.env` and
+  exports `ANTHROPIC_BASE_URL` plus a Claude-compatible credential
+  (`ANTHROPIC_API_KEY` mapped from Hermes' `ANTHROPIC_TOKEN`; `proxy-managed`
+  sentinel handled). `ANTHROPIC_BASE_URL` is configurable from the dashboard
+  `/env` page via `OPTIONAL_ENV_VARS` — point it at Anthropic or a cheaper
+  Anthropic-compatible relay (add the relay host to `_AI_NO_PROXY` if custom).
+
+### 16.2 The runner primitive — `hermes_cli/claude_code_runner.py`
+
+Stdlib-only, shared by both surfaces:
+- `build_claude_argv` / `run_claude_code` — spawn `claude -p … --output-format
+  stream-json --verbose`, stream events, capture the session id, and enforce a
+  turn cap + wall-clock timeout (kills a runaway turn).
+- `parse_stream_json_line` — normalize the CLI's newline-delimited stream-json
+  into events; unknown/garbage lines degrade to `raw` so a CLI bump can't break
+  the parser.
+- `GatewayEventTranslator` — map runner events onto the gateway's JSON-RPC
+  vocabulary (`message.delta` / `tool.generating` / `message.complete`).
+- `record_claude_code_usage` — write a finished run's usage to the sessions DB
+  tagged `agent_kind='claude_code'` (best-effort, never raises).
+
+### 16.3 Surface A — Vibe Code direct
+
+- A session carries an `engine` field. `session.create`/`session.resume` accept
+  `engine="claude_code"`; `prompt.submit` then routes to
+  `_run_prompt_submit_claude_code` ([tui_gateway/server.py](sopify-harness/tui_gateway/server.py))
+  instead of building a Hermes agent — additive and flag-gated, so Hermes chat
+  is untouched.
+- The claude turn runs in the project dir, resumes the project's pinned session
+  id (`get`/`set_claude_session_id` in
+  [vibe_models.py](sopify-harness/hermes_cli/vibe_models.py), stored in
+  `project.json:claude_code_session_id`) so it remembers prior turns, streams
+  via the translator, and records usage.
+- Frontend: `VibeProjectMarker.engine` → `useChatStream(engine)` forwards it to
+  the gateway; a toggle in `ProjectView` flips it via `PATCH
+  /api/vibe/projects/{name}` (`engine`).
+
+### 16.4 Surface B — headless tool + cron
+
+- `claude_code_task` ([tools/claude_code_tool.py](sopify-harness/tools/claude_code_tool.py))
+  runs a bounded headless turn and returns a compact summary (final message +
+  usage), not the full code — Hermes reads changed files from the shared
+  workspace. It's in `_HERMES_CORE_TOOLS`
+  ([toolsets.py](sopify-harness/toolsets.py)) so both interactive Hermes and
+  `hermes cron` jobs can call it; `check_fn` hides it when `claude` isn't on
+  PATH.
+- Skills: `~/.hermes/skills` is symlinked to `~/.claude/skills`, so Claude Code
+  reuses the project's existing Hermes skills (same `SKILL.md` format).
+
+### 16.5 Token attribution & monitoring
+
+- `sessions.agent_kind` (`'hermes'` default / `'claude_code'`) added
+  declaratively in [hermes_state.py](sopify-harness/hermes_state.py);
+  `update_token_counts` sets it (sticky via COALESCE). Pre-existing rows
+  backfill to `'hermes'`.
+- `/api/analytics/usage` returns a `by_agent_kind` split.
+- The Vibe Code page shows two monitoring cards (Claude Code vs Hermes), and
+  the Analytics page has a per-model Token In/Out bar chart with a model
+  multi-select (models with ≥1 request).
+
+### 16.6 Not yet validated
+
+Everything above is verified by unit/integration tests against a **fake**
+`claude` (stream-json) and `tsc`. A real-CLI spike in the sandbox (rebuild the
+image → set `ANTHROPIC_BASE_URL` → toggle a project to Claude Code → confirm
+edits + the right `--permission-mode` + populated cards) is still pending.
 
 ---
 
