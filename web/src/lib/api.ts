@@ -935,9 +935,23 @@ export interface AnalyticsSkillsSummary {
   distinct_skills_used: number;
 }
 
+export interface AnalyticsAgentKindEntry {
+  agent_kind: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+  estimated_cost: number;
+  actual_cost: number;
+  sessions: number;
+  api_calls: number;
+}
+
 export interface AnalyticsResponse {
   daily: AnalyticsDailyEntry[];
   by_model: AnalyticsModelEntry[];
+  /** Per-engine split (hermes vs claude_code). Optional for older backends. */
+  by_agent_kind?: AnalyticsAgentKindEntry[];
   totals: {
     total_input: number;
     total_output: number;
