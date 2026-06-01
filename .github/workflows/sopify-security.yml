@@ -36,7 +36,7 @@ jobs:
           exit-code: "1"   # REQ-11.5 — fail PR on CRITICAL/HIGH
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-sandbox.sarif
 
