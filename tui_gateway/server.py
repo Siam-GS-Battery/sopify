@@ -3545,11 +3545,15 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
             return
         existing = get_claude_session_id(project)
         cc_sid = existing or new_session_id()
-        # acceptEdits lets the CLI write files in its sandboxed project dir
-        # without an interactive prompt (there is no human to answer one in this
-        # headless stream); overridable for spike/debugging. Phase 0 validates.
+        # Default bypassPermissions: this is an isolated sandbox and there is no
+        # human to answer tool prompts in the headless stream, so acceptEdits
+        # (edits-only) left the agent unable to run npm / start a dev server and
+        # looping on "approve this command". bypass lets it work autonomously in
+        # its project dir. Override with SOPIFY_CLAUDE_CODE_PERMISSION_MODE to
+        # restrict (e.g. "acceptEdits"). Trust boundary matches Hermes' own
+        # terminal tool — the sandbox mounts the user's own ~/.hermes.
         permission_mode = os.environ.get(
-            "SOPIFY_CLAUDE_CODE_PERMISSION_MODE", "acceptEdits"
+            "SOPIFY_CLAUDE_CODE_PERMISSION_MODE", "bypassPermissions"
         )
         # Use the project's per-phase model (the picker) — strip the
         # "<provider>/" prefix so the CLI gets the bare model id the endpoint
