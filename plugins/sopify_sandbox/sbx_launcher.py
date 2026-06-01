@@ -501,6 +501,16 @@ if [ -n "$hermes_src" ]; then
     rm -rf "$vp"
   fi
   ln -sfn "$hermes_src/vibe-projects" "$vp"
+  # Expose Hermes skills to Claude Code (PR 2.4). Claude Code discovers
+  # user-level skills under ~/.claude/skills — the same SKILL.md layout as
+  # ~/.hermes/skills — so symlinking the whole dir lets the Vibe Code Claude
+  # engine reuse the project's existing Hermes skills (e.g. sopify-sdlc-*).
+  # Only ~/.claude/skills is touched; the rest of ~/.claude (Claude Code's own
+  # config) is left alone. ln -sfn is idempotent across relaunches.
+  if [ -d "$hermes_src/skills" ]; then
+    mkdir -p "$HOME/.claude"
+    ln -sfn "$hermes_src/skills" "$HOME/.claude/skills"
+  fi
 fi
 
 # Make the Hermes-managed Anthropic config reach the `claude` CLI. sbx runs
