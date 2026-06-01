@@ -20,6 +20,8 @@ import { ThemeCard, type ThemeOption } from "@/components/vibe/ThemeCard";
 import { VIBE_STEPS, VerticalStepper } from "@/components/vibe/VerticalStepper";
 import { api } from "@/lib/api";
 import type {
+  AnalyticsAgentKindEntry,
+  AnalyticsResponse,
   VibeProjectGetResponse,
   VibeProjectMarker,
   VibeProjectSummary,
@@ -192,6 +194,73 @@ export default function VibeCodePage() {
 
 // ── Projects list ────────────────────────────────────────────────────────────
 
+function fmtNum(n: number): string {
+  return (n ?? 0).toLocaleString();
+}
+
+/** One monitoring card: total tokens (+ in/out + cost) for an engine. */
+function UsageCard({
+  title,
+  showIcon,
+  entry,
+}: {
+  title: string;
+  showIcon?: boolean;
+  entry?: AnalyticsAgentKindEntry;
+}) {
+  const input = entry?.input_tokens ?? 0;
+  const output = entry?.output_tokens ?? 0;
+  const cost = entry?.estimated_cost ?? 0;
+  return (
+    <div className="min-w-[180px] flex-1 rounded-lg border border-border/50 bg-background-base/40 px-4 py-3">
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {showIcon && <Sparkles className="h-3.5 w-3.5" />}
+        <span>{title}</span>
+      </div>
+      <div className="mt-1 text-lg font-semibold tabular-nums">
+        {fmtNum(input + output)}{" "}
+        <span className="text-xs font-normal text-muted-foreground">tokens</span>
+      </div>
+      <div className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
+        in {fmtNum(input)} · out {fmtNum(output)}
+        {cost > 0 ? ` · $${cost.toFixed(4)}` : ""}
+      </div>
+    </div>
+  );
+}
+
+/** Two cards on the Vibe Code page: Claude Code vs Hermes token usage (last
+ *  30 days), reading the analytics endpoint's by_agent_kind split. Renders
+ *  nothing if analytics is gated/unavailable so it never clutters the page. */
+function TokenUsageCards() {
+  const [data, setData] = useState<AnalyticsResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getAnalytics(30)
+      .then((r) => {
+        if (!cancelled) setData(r);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (failed) return null;
+  const byKind = data?.by_agent_kind ?? [];
+  const find = (k: string) => byKind.find((e) => e.agent_kind === k);
+  return (
+    <div className="flex flex-wrap gap-3">
+      <UsageCard title="Token Usage · Claude Code" showIcon entry={find("claude_code")} />
+      <UsageCard title="Token Usage · Hermes" entry={find("hermes")} />
+    </div>
+  );
+}
+
 function ProjectsList({
   onOpen,
   onNew,
@@ -244,6 +313,8 @@ function ProjectsList({
           <span>New project</span>
         </Button>
       </header>
+
+      <TokenUsageCards />
 
       {err && (
         <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
