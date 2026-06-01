@@ -3503,6 +3503,7 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
     from hermes_cli.claude_code_runner import (
         GatewayEventTranslator,
         new_session_id,
+        record_claude_code_usage,
         run_claude_code,
     )
     from hermes_cli.vibe_models import (
@@ -3540,6 +3541,10 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
         store = result.session_id or cc_sid
         if store and store != existing:
             set_claude_session_id(project, store)
+        # Attribute this turn's tokens to claude_code in the sessions DB so the
+        # dashboard can split usage by engine (Phase 4). Keyed by the durable
+        # session_key; best-effort (never raises).
+        record_claude_code_usage(_get_db(), session.get("session_key"), result)
         err = None
         if result.is_error and not result.final_text:
             err = ("Claude Code timed out." if result.timed_out

@@ -86,6 +86,27 @@ def test_success_returns_summary_not_full_code():
     print("ok success_summary")
 
 
+def test_records_usage_to_db():
+    import hermes_state as hs
+    with tempfile.TemporaryDirectory() as t:
+        t = Path(t)
+        _install_fake_claude(t / "bin")
+        dbpath = t / "state.db"
+        orig = hs.DEFAULT_DB_PATH
+        hs.DEFAULT_DB_PATH = dbpath  # redirect the tool's SessionDB() write
+        try:
+            out = cct.claude_code_task("implement a thing", working_dir=str(t))
+        finally:
+            hs.DEFAULT_DB_PATH = orig
+        res = json.loads(out)
+        db = hs.SessionDB(dbpath)
+        row = db.get_session(res["session_id"])
+        assert row is not None
+        assert row["agent_kind"] == "claude_code"
+        assert row["input_tokens"] == 200 and row["output_tokens"] == 80
+    print("ok records_usage")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

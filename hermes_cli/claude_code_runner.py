@@ -287,6 +287,33 @@ def claude_usage_to_gateway(
     }
 
 
+def record_claude_code_usage(db, session_id: Optional[str], result: "ClaudeCodeResult") -> None:
+    """Record a finished run's usage to the sessions DB as agent_kind='claude_code'.
+
+    ``db`` is any object exposing ``update_token_counts(...)`` (a SessionDB) —
+    passed in so this module stays DB-agnostic and unit-testable with a fake.
+    No-op when ``db`` or ``session_id`` is falsy, and never raises: token
+    attribution must not be able to break a turn.
+    """
+    if db is None or not session_id:
+        return
+    usage = result.usage or {}
+    try:
+        db.update_token_counts(
+            session_id,
+            input_tokens=_int(usage.get("input_tokens")),
+            output_tokens=_int(usage.get("output_tokens")),
+            cache_read_tokens=_int(usage.get("cache_read_input_tokens")),
+            cache_write_tokens=_int(usage.get("cache_creation_input_tokens")),
+            estimated_cost_usd=result.cost_usd,
+            api_call_count=result.num_turns or 0,
+            cost_source="claude_code",
+            agent_kind="claude_code",
+        )
+    except Exception:  # noqa: BLE001 — attribution is best-effort
+        _log.exception("claude_code: failed to record usage for %s", session_id)
+
+
 class GatewayEventTranslator:
     """Feed ClaudeCodeEvents in, get gateway events out via ``emit``.
 

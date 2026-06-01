@@ -22,7 +22,7 @@ logic lives there and is unit-tested independently.
 import json
 import os
 import shutil
-from typing import Any, Optional
+from typing import Optional
 
 
 # Headless defaults. Conservative turn cap + timeout so a single delegated task
@@ -73,6 +73,16 @@ def claude_code_task(
         )
     except Exception as exc:  # noqa: BLE001 — report, don't crash the agent turn
         return tool_error(f"Claude Code run failed: {exc}")
+
+    # Attribute this run's tokens to claude_code in the sessions DB (Phase 4),
+    # keyed by the CLI session id, so dashboard analytics can split usage by
+    # engine. Best-effort: a DB hiccup must not fail the task.
+    try:
+        from hermes_state import SessionDB
+        from hermes_cli.claude_code_runner import record_claude_code_usage
+        record_claude_code_usage(SessionDB(), result.session_id, result)
+    except Exception:  # noqa: BLE001
+        pass
 
     return json.dumps(
         {
