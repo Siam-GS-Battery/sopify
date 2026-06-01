@@ -238,23 +238,7 @@ function ProjectsList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pb-8 normal-case">
-      <header className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="rounded-lg border border-border/60 bg-background-base/40 p-2 text-midground">
-            <Sparkles className="h-5 w-5" />
-          </div>
-          <div>
-            <Typography
-              mondwest
-              className="font-bold text-[1.1rem] tracking-[0.05em] uppercase text-midground"
-            >
-              Vibe Code
-            </Typography>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Guided AI-DLC flow. Pick a project to continue, or start a new one.
-            </p>
-          </div>
-        </div>
+      <header className="flex items-start justify-end gap-3">
         <Button onClick={onNew} className="gap-2">
           <Plus className="h-4 w-4" />
           <span>New project</span>
