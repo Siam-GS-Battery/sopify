@@ -292,6 +292,26 @@ def test_claude_turn_persists_messages_for_resume():
     print("ok persists_messages")
 
 
+def test_claude_engine_passes_phase_model():
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        # marker phase=backend -> VIBE default alibaba/qwen3-coder-plus
+        _vm, pdir = _setup(home, "myapp")
+        _install_fake_claude(home / "bin")
+        s, _events = _capture_server()
+        s._get_db = lambda: None
+        session = {
+            "history_lock": threading.Lock(), "running": True,
+            "vibe_project": "myapp", "engine": "claude_code", "session_key": "k",
+        }
+        s._run_prompt_submit_claude_code("r", "sid", session, "hi")
+        argv = (pdir / "CLAUDE_ARGV.txt").read_text()
+        # the picker's model reaches the CLI with the provider prefix stripped,
+        # instead of the CLI's Opus default
+        assert "--model qwen3-coder-plus" in argv
+    print("ok passes_phase_model")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

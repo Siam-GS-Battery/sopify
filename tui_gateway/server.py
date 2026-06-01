@@ -3551,11 +3551,19 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
         permission_mode = os.environ.get(
             "SOPIFY_CLAUDE_CODE_PERMISSION_MODE", "acceptEdits"
         )
+        # Use the project's per-phase model (the picker) — strip the
+        # "<provider>/" prefix so the CLI gets the bare model id the endpoint
+        # expects (e.g. "qwen3-coder-plus" via a relay, or "claude-sonnet-4-6").
+        # Without this the CLI uses its own default (Opus), ignoring the picker
+        # and risking a model the relay doesn't serve.
+        vibe_model = _resolve_vibe_model_for_session(session)
+        cc_model = vibe_model.split("/", 1)[-1] if vibe_model else None
         result = run_claude_code(
             str(text),
             cwd=str(cwd),
             session_id=cc_sid,
             resume=bool(existing),
+            model=cc_model,
             permission_mode=permission_mode,
             on_event=translator.handle,
         )
@@ -3572,6 +3580,7 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
                 cwd=str(cwd),
                 session_id=cc_sid,
                 resume=False,
+                model=cc_model,
                 permission_mode=permission_mode,
                 on_event=translator.handle,
             )
