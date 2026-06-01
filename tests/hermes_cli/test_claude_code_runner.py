@@ -149,6 +149,7 @@ def test_run_nonzero_exit_flags_error():
     body = """
         import sys, json
         print(json.dumps({"type":"system","subtype":"init","session_id":"s"}))
+        sys.stderr.write("Invalid API key - please run /login\\n")
         sys.exit(2)
     """
     with tempfile.TemporaryDirectory() as d:
@@ -156,6 +157,8 @@ def test_run_nonzero_exit_flags_error():
         fake = _write_fake_claude(d, body)
         result = ccr.run_claude_code("x", cwd=str(d), claude_bin=fake, timeout_s=30)
         assert result.returncode == 2 and result.is_error is True and result.timed_out is False
+        # the real failure reason is surfaced, not swallowed
+        assert "Invalid API key" in result.stderr_tail
     print("ok run_nonzero_exit")
 
 

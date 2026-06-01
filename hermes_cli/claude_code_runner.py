@@ -72,6 +72,7 @@ class ClaudeCodeResult:
     usage: dict = field(default_factory=dict)
     cost_usd: Optional[float] = None
     num_turns: Optional[int] = None
+    stderr_tail: str = ""  # last lines of the CLI's stderr — populated on error
 
 
 def new_session_id() -> str:
@@ -221,6 +222,21 @@ def run_claude_code(
         timer.daemon = True
         timer.start()
 
+    # Drain stderr in a thread so the CLI can't deadlock filling its pipe while
+    # we read stdout, and so we can surface the real failure reason on error.
+    stderr_lines: List[str] = []
+
+    def _drain_stderr() -> None:
+        try:
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                stderr_lines.append(line)
+        except Exception:  # noqa: BLE001 — best-effort capture
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -247,10 +263,17 @@ def run_claude_code(
     finally:
         if timer is not None:
             timer.cancel()
+        stderr_thread.join(timeout=1.0)
 
     result.returncode = proc.returncode
     if proc.returncode not in (0, None) and not result.timed_out:
         result.is_error = True
+    if result.is_error:
+        tail = "".join(stderr_lines).strip()
+        result.stderr_tail = tail[-1000:]
+        if tail:
+            _log.error("claude_code: exited rc=%s — stderr tail: %s",
+                       result.returncode, result.stderr_tail)
     return result
 
 

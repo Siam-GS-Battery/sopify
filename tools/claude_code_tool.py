@@ -94,6 +94,8 @@ def claude_code_task(
             "num_turns": result.num_turns,
             "timed_out": result.timed_out,
             "returncode": result.returncode,
+            # On failure, the CLI's stderr tail — the actual reason it exited.
+            "error": result.stderr_tail if result.is_error else None,
             "working_dir": cwd,
         },
         ensure_ascii=False,
