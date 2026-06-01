@@ -4,13 +4,31 @@ import { Markdown } from "@/components/Markdown";
 import { ToolCall } from "@/components/ToolCall";
 import { ThinkingBubble } from "@/components/chat/ThinkingBubble";
 import { cn } from "@/lib/utils";
-import type { AssistantTurn, UserTurn } from "@/hooks/useChatStream";
+import type {
+  AssistantTurn,
+  SystemTurn,
+  UserTurn,
+} from "@/hooks/useChatStream";
 
 /** Right-aligned user bubble. */
 export function UserBubble({ turn }: { turn: UserTurn }) {
   return (
     <div className="flex justify-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 border border-primary/20 px-3.5 py-2 text-sm whitespace-pre-wrap break-words text-foreground">
+        {turn.text}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Centered system note — slash-command output (`/help`, `/model`, …). Mono
+ * + muted so it reads as terminal output rather than a chat message.
+ */
+export function SystemBubble({ turn }: { turn: SystemTurn }) {
+  return (
+    <div className="flex justify-center">
+      <div className="max-w-[92%] rounded-lg border border-border/60 bg-muted/30 px-3 py-2 font-mono text-xs whitespace-pre-wrap break-words text-muted-foreground">
         {turn.text}
       </div>
     </div>

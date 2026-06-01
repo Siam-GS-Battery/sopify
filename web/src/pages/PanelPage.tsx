@@ -87,6 +87,7 @@ export default function PanelPage() {
   ).current;
   const {
     state,
+    gw,
     sessionId,
     sessionKey,
     turns,
@@ -285,6 +286,7 @@ export default function PanelPage() {
           onStop={interrupt}
           prefill={prefill.text}
           prefillKey={prefill.key}
+          gw={gw}
         />
       </section>
 

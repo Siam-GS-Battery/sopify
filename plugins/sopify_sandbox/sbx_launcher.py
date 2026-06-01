@@ -441,9 +441,12 @@ def _publish_port(name: str, host_port: int, sbx_port: int) -> int:
 
 
 def _link_hermes_into_sandbox(name: str) -> None:
-    """Symlink the mounted host ~/.hermes/.env into the sopify user's $HOME
-    and (if mounted) re-link ``/usr/local/bin/sopify`` to the host's dev
-    repo so code edits are live without rebuilding the sandbox image.
+    """Symlink the mounted host ~/.hermes/{.env, auth.json, state.db} into the
+    sopify user's $HOME and (if mounted) re-link ``/usr/local/bin/sopify`` to
+    the host's dev repo so code edits are live without rebuilding the image.
+
+    Sharing ``state.db`` is what makes the dashboard's Token Status / analytics
+    show real usage — otherwise the microVM reads an empty sandbox-local DB.
 
     sbx kit schema v1 only parses `network.allowedDomains` — its `startup`
     block is silently ignored. So instead of relying on kit-time symlinking,
@@ -469,7 +472,14 @@ for candidate in /Users/*/.hermes /home/*/.hermes /root/.hermes; do
   fi
 done
 if [ -n "$hermes_src" ]; then
-  for f in .env auth.json; do
+  # .env / auth.json  — credentials the env_loader + dashboard API-key form need.
+  # state.db          — the session history DB. Without it the sandboxed
+  #   dashboard reads an empty sandbox-local DB, so Token Status / analytics
+  #   always show zero even when the host has real usage. Symlinking shares the
+  #   one DB so analytics (and sessions started inside the sandbox) reflect the
+  #   host's real history. Safe here: ~/.hermes is already rw-mounted and sopify
+  #   is single-user, so there is no competing writer to race the SQLite WAL.
+  for f in .env auth.json state.db; do
     if [ -e "$hermes_src/$f" ]; then
       ln -sf "$hermes_src/$f" "$HOME/.hermes/$f"
     fi

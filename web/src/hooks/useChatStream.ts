@@ -22,10 +22,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { GatewayClient, type ConnectionState } from "@/lib/gatewayClient";
+import { executeSlash } from "@/lib/slashExec";
 import type { ToolEntry } from "@/components/ToolCall";
 
 export interface UserTurn {
   kind: "user";
+  id: string;
+  text: string;
+}
+
+/**
+ * Output of a slash command (`/help`, `/model`, …) executed locally rather
+ * than submitted to the agent. Rendered as a centered, monospace transcript
+ * note so it reads as system output, not a chat message.
+ */
+export interface SystemTurn {
+  kind: "system";
   id: string;
   text: string;
 }
@@ -47,7 +59,7 @@ export interface AssistantTurn {
   error?: string;
 }
 
-export type Turn = UserTurn | AssistantTurn;
+export type Turn = UserTurn | AssistantTurn | SystemTurn;
 
 /** A dev server detected for this session — driven by the gateway's
  * `dev_server.detected` event. The preview iframe in Vibe Code Building
@@ -61,6 +73,12 @@ export interface DevServerHint {
 
 export interface UseChatStream {
   state: ConnectionState;
+  /**
+   * The live gateway client. Exposed so the composer can drive slash-command
+   * autocomplete (`complete.slash`) against the same connection. Stable for
+   * the lifetime of the hook.
+   */
+  gw: GatewayClient;
   /** In-memory gateway handle. Used for prompt.submit / session.interrupt. */
   sessionId: string | null;
   /**
@@ -149,9 +167,10 @@ export function useChatStream(
    */
   vibeProject?: string | null,
 ): UseChatStream {
-  const gwRef = useRef<GatewayClient | null>(null);
-  if (gwRef.current === null) gwRef.current = new GatewayClient();
-  const gw = gwRef.current;
+  // One client per hook instance. useState's lazy initialiser gives a stable
+  // value that's safe to read during render (and to return for the composer's
+  // slash autocomplete) — unlike a ref, whose .current can't be read here.
+  const [gw] = useState(() => new GatewayClient());
 
   const [state, setState] = useState<ConnectionState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -424,7 +443,10 @@ export function useChatStream(
     };
   }, [gw, upsertAssistant, resumeId, vibeProject]);
 
-  const send = useCallback(
+  // Submit a turn to the agent (the non-slash path). Pushes the user bubble
+  // and fires prompt.submit. Also used as the `send` callback for slash
+  // directives that resolve to a message (skill / send).
+  const submitPrompt = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       const sid = sidRef.current;
@@ -447,6 +469,39 @@ export function useChatStream(
     [gw, busy],
   );
 
+  // Append a system note (slash-command output) to the transcript.
+  const pushSystem = useCallback((text: string) => {
+    setTurns((prev) => [...prev, { kind: "system", id: nextId("s"), text }]);
+  }, []);
+
+  const send = useCallback(
+    (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+
+      // Slash commands run through the shared slash pipeline (mirrors the Ink
+      // TUI) instead of being submitted to the agent as a prompt. Output is
+      // rendered as a system note; `skill`/`send` directives fall back to a
+      // real prompt submission via submitPrompt.
+      if (trimmed.startsWith("/")) {
+        setTurns((prev) => [
+          ...prev,
+          { kind: "user", id: nextId("u"), text: trimmed },
+        ]);
+        void executeSlash({
+          command: trimmed,
+          sessionId: sidRef.current ?? "",
+          gw,
+          callbacks: { sys: pushSystem, send: submitPrompt },
+        });
+        return;
+      }
+
+      submitPrompt(trimmed);
+    },
+    [gw, pushSystem, submitPrompt],
+  );
+
   const interrupt = useCallback(() => {
     const sid = sidRef.current;
     if (!sid) return;
@@ -458,6 +513,7 @@ export function useChatStream(
   return useMemo(
     () => ({
       state,
+      gw,
       sessionId,
       sessionKey,
       turns,
@@ -469,6 +525,7 @@ export function useChatStream(
     }),
     [
       state,
+      gw,
       sessionId,
       sessionKey,
       turns,

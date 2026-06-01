@@ -2,6 +2,8 @@ import { Button } from "@nous-research/ui/ui/components/button";
 import { ArrowUp, Square } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { SlashPopover, type SlashPopoverHandle } from "@/components/SlashPopover";
+import type { GatewayClient } from "@/lib/gatewayClient";
 import { cn } from "@/lib/utils";
 
 /**
@@ -12,6 +14,10 @@ import { cn } from "@/lib/utils";
  * `prefill` lets the canvas inject a "selected component" context block the
  * user can edit before sending. `prefillKey` bumps on each new selection so
  * selecting the same element twice re-injects the block.
+ *
+ * When `gw` is provided, typing `/` opens the slash-command autocomplete
+ * popover (same UX as the Ink TUI). Submitting a `/`-prefixed line routes
+ * through the slash pipeline in `useChatStream.send`, not a plain prompt.
  */
 export function Composer({
   busy,
@@ -20,6 +26,7 @@ export function Composer({
   onStop,
   prefill,
   prefillKey,
+  gw,
 }: {
   busy: boolean;
   disabled: boolean;
@@ -27,9 +34,11 @@ export function Composer({
   onStop: () => void;
   prefill?: string;
   prefillKey?: number;
+  gw?: GatewayClient | null;
 }) {
   const [value, setValue] = useState("");
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const slashRef = useRef<SlashPopoverHandle>(null);
 
   const autosize = useCallback(() => {
     const ta = taRef.current;
@@ -60,25 +69,40 @@ export function Composer({
   return (
     <div className="shrink-0 border-t border-border/60 bg-background-base/60 px-3 py-3 normal-case">
       <div className="mx-auto flex w-full max-w-3xl items-end gap-2">
-        <textarea
-          ref={taRef}
-          rows={1}
-          value={value}
-          disabled={disabled}
-          placeholder={disabled ? "Connecting…" : "Message Claude…"}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          className={cn(
-            "min-h-[2.5rem] flex-1 resize-none rounded-xl border border-border bg-background px-3 py-2",
-            "text-sm leading-relaxed text-foreground placeholder:text-muted-foreground",
-            "focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-60",
+        <div className="relative flex-1">
+          {gw && (
+            <SlashPopover
+              ref={slashRef}
+              input={value}
+              gw={gw}
+              onApply={(next) => {
+                setValue(next);
+                taRef.current?.focus();
+              }}
+            />
           )}
-        />
+          <textarea
+            ref={taRef}
+            rows={1}
+            value={value}
+            disabled={disabled}
+            placeholder={disabled ? "Connecting…" : "Message Claude…"}
+            onChange={(e) => setValue(e.target.value)}
+            onKeyDown={(e) => {
+              // Let the slash popover claim navigation/apply keys first.
+              if (slashRef.current?.handleKey(e)) return;
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            className={cn(
+              "min-h-[2.5rem] w-full resize-none rounded-xl border border-border bg-background px-3 py-2",
+              "text-sm leading-relaxed text-foreground placeholder:text-muted-foreground",
+              "focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:opacity-60",
+            )}
+          />
+        </div>
 
         {busy ? (
           <Button
