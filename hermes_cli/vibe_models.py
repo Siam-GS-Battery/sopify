@@ -116,3 +116,47 @@ def read_vibe_marker(name: str) -> Optional[dict]:
         return json.loads(f.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
+
+
+# project.json field holding the resumable Claude Code session id for this
+# project. This is what makes Claude Code "remember where it was" across turns
+# and dashboard reloads (concern Q3): the gateway pins a session id on the
+# first turn (claude_code_runner.new_session_id) and ``--resume``s it after.
+CLAUDE_SESSION_FIELD = "claude_code_session_id"
+
+
+def get_claude_session_id(name: str) -> Optional[str]:
+    """Return the project's stored Claude Code session id, or None."""
+    marker = read_vibe_marker(name)
+    if not marker:
+        return None
+    sid = marker.get(CLAUDE_SESSION_FIELD)
+    return sid if isinstance(sid, str) and sid else None
+
+
+def set_claude_session_id(name: str, session_id: str) -> bool:
+    """Persist ``session_id`` into the project's project.json. Returns success.
+
+    Merges into the existing marker (never clobbers other fields) and writes
+    atomically (temp + replace) so a crash mid-write can't corrupt the marker.
+    Returns False for an unknown/invalid project or a write error rather than
+    raising — the caller is the gateway, where an exception would kill a turn.
+    """
+    d = vibe_project_dir(name)
+    if d is None:
+        return False
+    f = d / "project.json"
+    try:
+        marker = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    except (json.JSONDecodeError, OSError):
+        marker = {}
+    if not isinstance(marker, dict):
+        marker = {}
+    marker[CLAUDE_SESSION_FIELD] = session_id
+    tmp = f.with_name(f.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(marker, indent=2), encoding="utf-8")
+        tmp.replace(f)
+        return True
+    except OSError:
+        return False
