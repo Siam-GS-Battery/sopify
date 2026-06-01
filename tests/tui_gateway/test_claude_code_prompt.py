@@ -68,6 +68,41 @@ def _install_fake_claude(binroot: Path):
     os.environ["PATH"] = str(binroot) + os.pathsep + os.environ.get("PATH", "")
 
 
+# Fails on --resume <id> (stale session) but succeeds on a fresh --session-id.
+_FAKE_STALE_THEN_OK = """#!/usr/bin/env python3
+import json, sys
+argv = sys.argv[1:]
+if "--resume" in argv:
+    sid = argv[argv.index("--resume") + 1]
+    sys.stderr.write("No conversation found with session ID: " + sid + "\\n")
+    sys.exit(1)
+sid = argv[argv.index("--session-id") + 1] if "--session-id" in argv else "fresh"
+for o in [
+    {"type": "system", "subtype": "init", "session_id": sid, "model": "x"},
+    {"type": "assistant", "session_id": sid,
+     "message": {"content": [{"type": "text", "text": "Recovered!"}]}},
+    {"type": "result", "subtype": "success", "is_error": False, "session_id": sid,
+     "result": "Recovered!", "num_turns": 1, "usage": {"input_tokens": 5, "output_tokens": 2}},
+]:
+    print(json.dumps(o)); sys.stdout.flush()
+"""
+
+# Always fails with a non-resume error (no retry should be attempted).
+_FAKE_ALWAYS_FAIL = """#!/usr/bin/env python3
+import sys
+sys.stderr.write("boom: something broke\\n")
+sys.exit(1)
+"""
+
+
+def _install_fake(binroot: Path, body: str):
+    binroot.mkdir(parents=True, exist_ok=True)
+    fake = binroot / "claude"
+    fake.write_text(body)
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IRWXU)
+    os.environ["PATH"] = str(binroot) + os.pathsep + os.environ.get("PATH", "")
+
+
 def _capture_server():
     """Import the gateway and monkeypatch write_json to collect emitted events."""
     import tui_gateway.server as s
@@ -188,6 +223,50 @@ def test_claude_engine_records_usage_to_db():
         assert row["agent_kind"] == "claude_code"
         assert row["input_tokens"] == 50 and row["output_tokens"] == 20
     print("ok records_usage")
+
+
+def test_recovers_from_stale_session_id():
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        vm, pdir = _setup(home, "myapp", with_marker=False)
+        # marker carries a session id the CLI never actually created
+        (pdir / "project.json").write_text(json.dumps(
+            {"name": "myapp", "claude_code_session_id": "stale-0000"}))
+        _install_fake(home / "bin", _FAKE_STALE_THEN_OK)
+        s, events = _capture_server()
+        s._get_db = lambda: None
+        session = {
+            "history_lock": threading.Lock(), "running": True,
+            "vibe_project": "myapp", "engine": "claude_code", "session_key": "k",
+        }
+        s._run_prompt_submit_claude_code("r", "sid", session, "hi")
+        # retried fresh and succeeded
+        assert _types(events)[-1] == "message.complete"
+        assert _payload(events, "message.complete")["status"] == "complete"
+        # the stale id was replaced with the fresh one, not kept
+        new_id = vm.get_claude_session_id("myapp")
+        assert new_id and new_id != "stale-0000"
+        assert session["running"] is False
+    print("ok recovers_stale")
+
+
+def test_does_not_persist_session_on_failure():
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        vm, _pdir = _setup(home, "myapp")  # marker, no session id
+        _install_fake(home / "bin", _FAKE_ALWAYS_FAIL)
+        s, events = _capture_server()
+        s._get_db = lambda: None
+        session = {
+            "history_lock": threading.Lock(), "running": True,
+            "vibe_project": "myapp", "engine": "claude_code", "session_key": "k",
+        }
+        s._run_prompt_submit_claude_code("r", "sid", session, "hi")
+        # a failed turn must NOT persist a phantom session id
+        assert vm.get_claude_session_id("myapp") is None
+        assert _payload(events, "message.complete")["status"] == "error"
+        assert session["running"] is False
+    print("ok no_persist_on_failure")
 
 
 if __name__ == "__main__":
