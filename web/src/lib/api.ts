@@ -661,6 +661,9 @@ export interface VibeProjectMarker {
    * marked as addressed. Persisted on the marker so checks survive
    * reloads and re-runs of the review. */
   addressed_security_findings?: string[];
+  /** Chat engine for this project. "claude_code" routes Vibe Code chat to
+   * the Claude Code CLI (Surface A); absent/anything else = the Hermes agent. */
+  engine?: string | null;
 }
 
 export interface VibeProjectSummary {
