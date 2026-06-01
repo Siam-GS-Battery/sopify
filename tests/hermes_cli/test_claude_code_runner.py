@@ -249,6 +249,30 @@ def test_record_usage_maps_and_attributes():
     print("ok record_usage")
 
 
+def test_run_closes_stdin():
+    # `claude -p` blocks on stdin EOF when stdin is inherited (the gateway runs
+    # under a server, not a TTY) -> the turn hangs with no output. The runner
+    # must spawn with stdin=DEVNULL so the CLI uses the -p arg and proceeds.
+    import subprocess as _sp
+    captured = {}
+    real_popen = ccr.subprocess.Popen
+
+    def _spy(argv, **kw):
+        captured.update(kw)
+        return real_popen(argv, **kw)
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        fake = _write_fake_claude(d, _FAKE_SUCCESS)
+        ccr.subprocess.Popen = _spy
+        try:
+            ccr.run_claude_code("hi", cwd=str(d), claude_bin=fake, timeout_s=30)
+        finally:
+            ccr.subprocess.Popen = real_popen
+        assert captured.get("stdin") is _sp.DEVNULL
+    print("ok closes_stdin")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

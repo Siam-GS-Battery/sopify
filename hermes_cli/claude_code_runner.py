@@ -198,6 +198,12 @@ def run_claude_code(
     try:
         proc = subprocess.Popen(
             argv, cwd=cwd, env=proc_env,
+            # DEVNULL is essential: `claude -p` also reads the prompt from stdin
+            # and, with an inherited/never-closing stdin (the gateway runs under
+            # a server, not a TTY), blocks waiting for EOF that never comes — the
+            # turn hangs with no output. Closing stdin makes it use the -p arg
+            # and proceed immediately.
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1,
         )
