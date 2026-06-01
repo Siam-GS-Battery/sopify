@@ -1822,6 +1822,19 @@ def detect_static_provider_for_model(
     if not name:
         return None
 
+    # Explicit "<provider>/<model>" form — Vibe Code stores per-phase models
+    # this way (e.g. "anthropic/claude-sonnet-4-6", "alibaba/qwen3-coder-plus").
+    # When the prefix is a known DIRECT provider, honour it and strip the prefix
+    # so the bare model name reaches the API; otherwise the whole string leaks
+    # as the model (e.g. "anthropic/claude-sonnet-4-6" hitting alibaba's
+    # dashscope endpoint → 404 model_not_found). Aggregators (openrouter) use
+    # the "vendor/model" id as the actual model name, so leave those untouched.
+    if "/" in name:
+        prefix, _, rest = name.partition("/")
+        pid = _PROVIDER_ALIASES.get(prefix.lower(), prefix.lower())
+        if rest and pid in _PROVIDER_LABELS and pid not in _AGGREGATOR_PROVIDERS:
+            return (pid, rest)
+
     name_lower = name.lower()
     current_keys = _provider_keys(current_provider)
 
