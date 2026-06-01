@@ -149,6 +149,26 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
     [project.name],
   );
 
+  // Chat engine toggle. "claude_code" routes this project's chat to the Claude
+  // Code CLI (Surface A); the default is the Hermes agent. Persists to the
+  // marker so the choice survives reloads, then rehydrates the view.
+  const isClaudeCode = project.engine === "claude_code";
+  const [engineBusy, setEngineBusy] = useState(false);
+  const onToggleEngine = useCallback(async () => {
+    setEngineBusy(true);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        engine: isClaudeCode ? "" : "claude_code",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch {
+      // Non-fatal: leave the toggle on its previous state if the PATCH failed.
+    } finally {
+      setEngineBusy(false);
+    }
+  }, [project.name, isClaudeCode, onUpdated, onRefresh]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 pb-4 normal-case">
       {/* Horizontal stepper replaces the old top header + right rail
@@ -173,7 +193,28 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         }
-        rightSlot={<Badge tone="secondary">{project.phase}</Badge>}
+        rightSlot={
+          <div className="flex items-center gap-2">
+            <Button
+              ghost
+              onClick={onToggleEngine}
+              disabled={engineBusy}
+              title={
+                isClaudeCode
+                  ? "Chat runs on Claude Code — click to switch back to Hermes"
+                  : "Chat runs on Hermes — click to use Claude Code for this project"
+              }
+              className={cn(
+                "h-7 gap-1.5 px-2 text-xs",
+                isClaudeCode && "text-primary",
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {isClaudeCode ? "Claude Code" : "Hermes"}
+            </Button>
+            <Badge tone="secondary">{project.phase}</Badge>
+          </div>
+        }
       />
 
       <div className="flex min-h-0 flex-1 flex-col">
