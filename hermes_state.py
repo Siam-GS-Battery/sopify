@@ -215,6 +215,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     pricing_version TEXT,
     title TEXT,
     api_call_count INTEGER DEFAULT 0,
+    -- Which agent produced this session's usage: 'hermes' (default) or
+    -- 'claude_code'. Lets analytics split token/cost by engine (Phase 4).
+    -- Added declaratively; _reconcile_columns ADDs it (with this DEFAULT, so
+    -- pre-existing rows backfill to 'hermes') on the next startup.
+    agent_kind TEXT DEFAULT 'hermes',
     handoff_state TEXT,
     handoff_platform TEXT,
     handoff_error TEXT,
@@ -782,6 +787,7 @@ class SessionDB:
         billing_base_url: Optional[str] = None,
         billing_mode: Optional[str] = None,
         api_call_count: int = 0,
+        agent_kind: Optional[str] = None,
         absolute: bool = False,
     ) -> None:
         """Update token counters and backfill model if not already set.
@@ -817,7 +823,8 @@ class SessionDB:
                    billing_base_url = COALESCE(billing_base_url, ?),
                    billing_mode = COALESCE(billing_mode, ?),
                    model = COALESCE(model, ?),
-                   api_call_count = ?
+                   api_call_count = ?,
+                   agent_kind = COALESCE(?, agent_kind)
                    WHERE id = ?"""
         else:
             sql = """UPDATE sessions SET
@@ -838,7 +845,8 @@ class SessionDB:
                    billing_base_url = COALESCE(billing_base_url, ?),
                    billing_mode = COALESCE(billing_mode, ?),
                    model = COALESCE(model, ?),
-                   api_call_count = COALESCE(api_call_count, 0) + ?
+                   api_call_count = COALESCE(api_call_count, 0) + ?,
+                   agent_kind = COALESCE(?, agent_kind)
                    WHERE id = ?"""
         params = (
             input_tokens,
@@ -857,6 +865,7 @@ class SessionDB:
             billing_mode,
             model,
             api_call_count,
+            agent_kind,
             session_id,
         )
         def _do(conn):
