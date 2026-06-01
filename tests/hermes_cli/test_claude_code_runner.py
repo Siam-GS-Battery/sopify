@@ -149,6 +149,7 @@ def test_run_nonzero_exit_flags_error():
     body = """
         import sys, json
         print(json.dumps({"type":"system","subtype":"init","session_id":"s"}))
+        sys.stderr.write("Invalid API key - please run /login\\n")
         sys.exit(2)
     """
     with tempfile.TemporaryDirectory() as d:
@@ -156,6 +157,8 @@ def test_run_nonzero_exit_flags_error():
         fake = _write_fake_claude(d, body)
         result = ccr.run_claude_code("x", cwd=str(d), claude_bin=fake, timeout_s=30)
         assert result.returncode == 2 and result.is_error is True and result.timed_out is False
+        # the real failure reason is surfaced, not swallowed
+        assert "Invalid API key" in result.stderr_tail
     print("ok run_nonzero_exit")
 
 
@@ -244,6 +247,30 @@ def test_record_usage_maps_and_attributes():
     ccr.record_claude_code_usage(FakeDB(), "", r)
     assert len(calls) == 1
     print("ok record_usage")
+
+
+def test_run_closes_stdin():
+    # `claude -p` blocks on stdin EOF when stdin is inherited (the gateway runs
+    # under a server, not a TTY) -> the turn hangs with no output. The runner
+    # must spawn with stdin=DEVNULL so the CLI uses the -p arg and proceeds.
+    import subprocess as _sp
+    captured = {}
+    real_popen = ccr.subprocess.Popen
+
+    def _spy(argv, **kw):
+        captured.update(kw)
+        return real_popen(argv, **kw)
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        fake = _write_fake_claude(d, _FAKE_SUCCESS)
+        ccr.subprocess.Popen = _spy
+        try:
+            ccr.run_claude_code("hi", cwd=str(d), claude_bin=fake, timeout_s=30)
+        finally:
+            ccr.subprocess.Popen = real_popen
+        assert captured.get("stdin") is _sp.DEVNULL
+    print("ok closes_stdin")
 
 
 if __name__ == "__main__":

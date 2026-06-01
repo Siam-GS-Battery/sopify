@@ -3547,8 +3547,11 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
         record_claude_code_usage(_get_db(), session.get("session_key"), result)
         err = None
         if result.is_error and not result.final_text:
-            err = ("Claude Code timed out." if result.timed_out
-                   else "Claude Code exited with an error.")
+            if result.timed_out:
+                err = "Claude Code timed out."
+            else:
+                detail = result.stderr_tail or f"exit code {result.returncode}"
+                err = f"Claude Code failed — {detail}"
         translator.finalize(error_message=err)
     except Exception as exc:  # noqa: BLE001 — a turn must never crash the gateway
         logger.exception("[tui_gateway] claude_code prompt failed")
