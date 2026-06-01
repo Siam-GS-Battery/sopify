@@ -3538,9 +3538,28 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
             permission_mode=permission_mode,
             on_event=translator.handle,
         )
-        store = result.session_id or cc_sid
-        if store and store != existing:
-            set_claude_session_id(project, store)
+        # Self-heal a stale session id: the stored id can point at a session the
+        # CLI never actually created (e.g. an earlier turn that failed before
+        # claude wrote the transcript), so --resume errors "No conversation
+        # found". Retry once with a fresh session instead of failing forever.
+        if (existing and result.is_error
+                and "No conversation found" in (result.stderr_tail or "")):
+            cc_sid = new_session_id()
+            existing = None
+            result = run_claude_code(
+                str(text),
+                cwd=str(cwd),
+                session_id=cc_sid,
+                resume=False,
+                permission_mode=permission_mode,
+                on_event=translator.handle,
+            )
+        # Persist the session id ONLY on success — storing it after a failure is
+        # what created the phantom-session loop above.
+        if not result.is_error:
+            store = result.session_id or cc_sid
+            if store and store != existing:
+                set_claude_session_id(project, store)
         # Attribute this turn's tokens to claude_code in the sessions DB so the
         # dashboard can split usage by engine (Phase 4). Keyed by the durable
         # session_key; best-effort (never raises).
