@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
 
-import { AssistantBubble, UserBubble } from "@/components/chat/MessageBubble";
+import {
+  AssistantBubble,
+  SystemBubble,
+  UserBubble,
+} from "@/components/chat/MessageBubble";
 import type { Turn } from "@/hooks/useChatStream";
 
 /**
@@ -45,6 +49,8 @@ export function ChatThread({ turns }: { turns: Turn[] }) {
           turns.map((turn) =>
             turn.kind === "user" ? (
               <UserBubble key={turn.id} turn={turn} />
+            ) : turn.kind === "system" ? (
+              <SystemBubble key={turn.id} turn={turn} />
             ) : (
               <AssistantBubble key={turn.id} turn={turn} />
             ),

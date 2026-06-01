@@ -242,6 +242,7 @@ function ChatPanel({
 }) {
   const {
     state,
+    gw,
     sessionId,
     sessionKey,
     turns,
@@ -321,6 +322,7 @@ function ChatPanel({
         disabled={disabled}
         onSend={send}
         onStop={interrupt}
+        gw={gw}
       />
     </section>
   );
