@@ -506,7 +506,7 @@ export const api = {
     ),
   patchVibeProject: (
     name: string,
-    body: { summary?: string; session_id?: string; phase?: string },
+    body: { summary?: string; session_id?: string; phase?: string; engine?: string },
   ) =>
     fetchJSON<{ ok: boolean; project: VibeProjectMarker }>(
       `/api/vibe/projects/${encodeURIComponent(name)}`,
