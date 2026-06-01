@@ -220,6 +220,32 @@ def test_translator_finalize_when_no_result():
     print("ok translator_finalize")
 
 
+def test_record_usage_maps_and_attributes():
+    calls = []
+
+    class FakeDB:
+        def update_token_counts(self, sid, **kw):
+            calls.append((sid, kw))
+
+    r = ccr.ClaudeCodeResult(
+        session_id="s1",
+        usage={"input_tokens": 100, "output_tokens": 40, "cache_read_input_tokens": 10},
+        cost_usd=0.02, num_turns=3)
+    ccr.record_claude_code_usage(FakeDB(), "s1", r)
+    assert len(calls) == 1
+    sid, kw = calls[0]
+    assert sid == "s1" and kw["agent_kind"] == "claude_code"
+    assert kw["input_tokens"] == 100 and kw["output_tokens"] == 40
+    assert kw["cache_read_tokens"] == 10
+    assert kw["estimated_cost_usd"] == 0.02 and kw["api_call_count"] == 3
+    assert kw["cost_source"] == "claude_code"
+    # no-op guards: missing db or session id must not call through
+    ccr.record_claude_code_usage(None, "s1", r)
+    ccr.record_claude_code_usage(FakeDB(), "", r)
+    assert len(calls) == 1
+    print("ok record_usage")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

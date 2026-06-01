@@ -169,6 +169,27 @@ def test_claude_engine_requires_vibe_project():
     print("ok requires_vibe_project")
 
 
+def test_claude_engine_records_usage_to_db():
+    import hermes_state as hs
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        _setup(home, "myapp")
+        _install_fake_claude(home / "bin")
+        s, _events = _capture_server()
+        db = hs.SessionDB(home / "state.db")
+        s._get_db = lambda: db  # point the gateway at our temp DB
+        session = {
+            "history_lock": threading.Lock(), "running": True,
+            "vibe_project": "myapp", "engine": "claude_code", "session_key": "k1",
+        }
+        s._run_prompt_submit_claude_code("r", "sid", session, "edit it")
+        row = db.get_session("k1")
+        assert row is not None
+        assert row["agent_kind"] == "claude_code"
+        assert row["input_tokens"] == 50 and row["output_tokens"] == 20
+    print("ok records_usage")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
