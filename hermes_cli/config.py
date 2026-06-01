@@ -1775,6 +1775,14 @@ REQUIRED_ENV_VARS = {}
 # Optional environment variables that enhance functionality
 OPTIONAL_ENV_VARS = {
     # ── Provider (handled in provider selection, not shown in checklists) ──
+    "ANTHROPIC_BASE_URL": {
+        "description": "Anthropic base URL override — also consumed by the sandboxed Claude Code CLI to route to a relay or cheaper Anthropic-compatible endpoint",
+        "prompt": "Anthropic base URL (leave empty for default https://api.anthropic.com)",
+        "url": None,
+        "password": False,
+        "category": "provider",
+        "advanced": True,
+    },
     "NOUS_BASE_URL": {
         "description": "Nous Portal base URL override",
         "prompt": "Nous Portal base URL (leave empty for default)",
