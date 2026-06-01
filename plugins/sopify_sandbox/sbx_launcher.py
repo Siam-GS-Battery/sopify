@@ -479,11 +479,28 @@ if [ -n "$hermes_src" ]; then
   #   one DB so analytics (and sessions started inside the sandbox) reflect the
   #   host's real history. Safe here: ~/.hermes is already rw-mounted and sopify
   #   is single-user, so there is no competing writer to race the SQLite WAL.
-  for f in .env auth.json state.db; do
+  # kanban.db          — the Kanban board DB. Same reasoning as state.db: a
+  #   sandbox-local copy makes the dashboard's /kanban tab show an empty board
+  #   even when the host has cards. Share the one file so boards persist.
+  for f in .env auth.json state.db kanban.db; do
     if [ -e "$hermes_src/$f" ]; then
       ln -sf "$hermes_src/$f" "$HOME/.hermes/$f"
     fi
   done
+  # vibe-projects/  — user-created Vibe Code apps. These are a DIRECTORY of
+  #   real project trees, not a single file. Until this was linked they were
+  #   written to the sandbox-local $HOME/.hermes/vibe-projects, which lives on
+  #   the ephemeral container fs — so every sandbox recreate silently wiped
+  #   every project ("No projects yet"). Point it at the rw host mount so apps
+  #   survive. `ln -sf` into an existing dir would nest the link inside it, so
+  #   migrate any not-yet-persisted projects, drop the local dir, then link.
+  mkdir -p "$hermes_src/vibe-projects"
+  vp="$HOME/.hermes/vibe-projects"
+  if [ -d "$vp" ] && [ ! -L "$vp" ]; then
+    cp -an "$vp/." "$hermes_src/vibe-projects/" 2>/dev/null || true
+    rm -rf "$vp"
+  fi
+  ln -sfn "$hermes_src/vibe-projects" "$vp"
 fi
 
 # Dev-mode override decision is taken at exec-time inside ``inner_cmd``
