@@ -3485,6 +3485,27 @@ def _start_notification_poller(sid: str, session: dict) -> threading.Event:
     return stop
 
 
+def _persist_claude_turn(session_key, user_text: str, assistant_text: str) -> None:
+    """Append a Claude Code turn (user + assistant) to the gateway session DB.
+
+    The claude path streams to the UI but writes nothing to the DB, so on
+    reload / session switch session.resume replays an empty history and the chat
+    looks wiped. Persisting the turn here makes it survive. Best-effort: a DB
+    hiccup must never break the turn.
+    """
+    if not session_key:
+        return
+    db = _get_db()
+    if db is None:
+        return
+    try:
+        db.append_message(session_key, role="user", content=user_text)
+        if assistant_text:
+            db.append_message(session_key, role="assistant", content=assistant_text)
+    except Exception:  # noqa: BLE001
+        logger.exception("[tui_gateway] claude_code: failed to persist turn")
+
+
 def _normalize_engine(value: Any) -> str | None:
     """Return ``"claude_code"`` for that engine, else None (= Hermes default)."""
     return "claude_code" if isinstance(value, str) and value.strip() == "claude_code" else None
@@ -3562,8 +3583,14 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
                 set_claude_session_id(project, store)
         # Attribute this turn's tokens to claude_code in the sessions DB so the
         # dashboard can split usage by engine (Phase 4). Keyed by the durable
-        # session_key; best-effort (never raises).
+        # session_key; best-effort (never raises). Also creates the session row.
         record_claude_code_usage(_get_db(), session.get("session_key"), result)
+        # Persist the turn (user + assistant) to the gateway session DB so it
+        # survives reload / switching sessions — session.resume replays messages
+        # from the DB, and the claude path otherwise writes nothing there, so the
+        # chat would come back empty. Success only; best-effort.
+        if not result.is_error:
+            _persist_claude_turn(session.get("session_key"), str(text), result.final_text)
         err = None
         if result.is_error and not result.final_text:
             if result.timed_out:

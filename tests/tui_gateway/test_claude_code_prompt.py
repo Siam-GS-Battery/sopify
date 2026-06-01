@@ -269,6 +269,29 @@ def test_does_not_persist_session_on_failure():
     print("ok no_persist_on_failure")
 
 
+def test_claude_turn_persists_messages_for_resume():
+    import hermes_state as hs
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        _setup(home, "myapp")
+        _install_fake_claude(home / "bin")
+        s, _events = _capture_server()
+        db = hs.SessionDB(home / "state.db")
+        s._get_db = lambda: db
+        session = {
+            "history_lock": threading.Lock(), "running": True,
+            "vibe_project": "myapp", "engine": "claude_code", "session_key": "k1",
+        }
+        s._run_prompt_submit_claude_code("r", "sid", session, "please edit the file")
+        # what session.resume would replay
+        msgs = db.get_messages_as_conversation("k1")
+        roles = [m.get("role") for m in msgs]
+        assert "user" in roles and "assistant" in roles
+        joined = " ".join(str(m.get("content", "")) for m in msgs)
+        assert "please edit the file" in joined and "Edited the file." in joined
+    print("ok persists_messages")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
