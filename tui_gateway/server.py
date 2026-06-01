@@ -2387,6 +2387,11 @@ def _(rid, params: dict) -> dict:
     vibe_project = params.get("vibe_project")
     vibe_project = vibe_project.strip() if isinstance(vibe_project, str) else None
 
+    # Engine selector — "claude_code" routes prompts to the Claude Code CLI
+    # (Surface A) instead of the in-process Hermes agent. Anything else (incl.
+    # absent) keeps the existing Hermes path. See _run_prompt_submit_claude_code.
+    engine = _normalize_engine(params.get("engine"))
+
     ready = threading.Event()
 
     _sessions[sid] = {
@@ -2409,6 +2414,7 @@ def _(rid, params: dict) -> dict:
         "tool_started_at": {},
         "transport": current_transport() or _stdio_transport,
         "vibe_project": vibe_project or None,
+        "engine": engine,
     }
 
     # Return the lightweight session immediately so Ink can paint the composer
@@ -2570,6 +2576,7 @@ def _(rid, params: dict) -> dict:
     # when the session was first created.
     vibe_project = params.get("vibe_project")
     vibe_project = vibe_project.strip() if isinstance(vibe_project, str) else None
+    engine = _normalize_engine(params.get("engine"))
     vibe_model = (
         _resolve_vibe_model_for_session({"vibe_project": vibe_project})
         if vibe_project
@@ -2590,6 +2597,8 @@ def _(rid, params: dict) -> dict:
         _init_session(sid, target, agent, history, cols=int(params.get("cols", 80)))
         if vibe_project:
             _sessions[sid]["vibe_project"] = vibe_project
+        if engine:
+            _sessions[sid]["engine"] = engine
     except Exception as e:
         return _err(rid, 5000, f"resume failed: {e}")
 
@@ -3343,6 +3352,17 @@ def _(rid, params: dict) -> dict:
     # doesn't change active; explicit interaction does.
     _set_active_session_for_sid(sid)
 
+    # Claude Code engine (Surface A): skip the Hermes agent build entirely and
+    # drive the turn through the CLI subprocess. Flag-gated — Hermes sessions
+    # fall through to the unchanged path below. running was set True above; the
+    # claude worker clears it in its finally.
+    if session.get("engine") == "claude_code":
+        threading.Thread(
+            target=_run_prompt_submit_claude_code,
+            args=(rid, sid, session, text), daemon=True,
+        ).start()
+        return _ok(rid, {"status": "streaming"})
+
     _start_agent_build(sid, session)
 
     def run_after_agent_ready() -> None:
@@ -3463,6 +3483,74 @@ def _start_notification_poller(sid: str, session: dict) -> threading.Event:
     )
     t.start()
     return stop
+
+
+def _normalize_engine(value: Any) -> str | None:
+    """Return ``"claude_code"`` for that engine, else None (= Hermes default)."""
+    return "claude_code" if isinstance(value, str) and value.strip() == "claude_code" else None
+
+
+def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> None:
+    """Run one turn through the Claude Code CLI instead of the Hermes agent.
+
+    Surface A of the integration: a Vibe Code project chats with `claude`
+    directly. We resume the project's pinned session id (so it remembers prior
+    turns — Q3), stream the CLI's events back as the same gateway events the UI
+    already renders, and persist the session id on the first turn. Runs in the
+    daemon thread spawned by prompt.submit; clears ``running`` in finally so a
+    crash can never wedge the session as busy.
+    """
+    from hermes_cli.claude_code_runner import (
+        GatewayEventTranslator,
+        new_session_id,
+        run_claude_code,
+    )
+    from hermes_cli.vibe_models import (
+        get_claude_session_id,
+        set_claude_session_id,
+        vibe_project_dir,
+    )
+
+    project = session.get("vibe_project")
+    cwd = vibe_project_dir(project) if project else None
+    _emit("message.start", sid)
+    translator = GatewayEventTranslator(lambda ev, pl=None: _emit(ev, sid, pl))
+    try:
+        if not project or cwd is None:
+            translator.finalize(error_message=(
+                "Claude Code engine needs a Vibe Code project bound to this session."
+            ))
+            return
+        existing = get_claude_session_id(project)
+        cc_sid = existing or new_session_id()
+        # acceptEdits lets the CLI write files in its sandboxed project dir
+        # without an interactive prompt (there is no human to answer one in this
+        # headless stream); overridable for spike/debugging. Phase 0 validates.
+        permission_mode = os.environ.get(
+            "SOPIFY_CLAUDE_CODE_PERMISSION_MODE", "acceptEdits"
+        )
+        result = run_claude_code(
+            str(text),
+            cwd=str(cwd),
+            session_id=cc_sid,
+            resume=bool(existing),
+            permission_mode=permission_mode,
+            on_event=translator.handle,
+        )
+        store = result.session_id or cc_sid
+        if store and store != existing:
+            set_claude_session_id(project, store)
+        err = None
+        if result.is_error and not result.final_text:
+            err = ("Claude Code timed out." if result.timed_out
+                   else "Claude Code exited with an error.")
+        translator.finalize(error_message=err)
+    except Exception as exc:  # noqa: BLE001 — a turn must never crash the gateway
+        logger.exception("[tui_gateway] claude_code prompt failed")
+        translator.finalize(error_message=f"Claude Code run failed: {exc}")
+    finally:
+        with session["history_lock"]:
+            session["running"] = False
 
 
 def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
