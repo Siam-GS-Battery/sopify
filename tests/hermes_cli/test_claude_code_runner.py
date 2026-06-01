@@ -9,7 +9,6 @@ network, and no installed CLI. Runnable under pytest OR directly:
 
 from __future__ import annotations
 
-import os
 import stat
 import sys
 import tempfile
@@ -158,6 +157,67 @@ def test_run_nonzero_exit_flags_error():
         result = ccr.run_claude_code("x", cwd=str(d), claude_bin=fake, timeout_s=30)
         assert result.returncode == 2 and result.is_error is True and result.timed_out is False
     print("ok run_nonzero_exit")
+
+
+def test_usage_mapper_matches_gateway_shape():
+    u = ccr.claude_usage_to_gateway(
+        {"input_tokens": 100, "output_tokens": 40,
+         "cache_read_input_tokens": 10, "cache_creation_input_tokens": 5},
+        model="claude-x", num_turns=3)
+    assert u["input"] == 100 and u["output"] == 40
+    assert u["cache_read"] == 10 and u["cache_write"] == 5
+    assert u["total"] == 140 and u["calls"] == 3 and u["model"] == "claude-x"
+    # keys must match what tui_gateway _get_usage produces
+    for k in ("model", "input", "output", "cache_read", "cache_write",
+              "reasoning", "prompt", "completion", "total", "calls"):
+        assert k in u, k
+    empty = ccr.claude_usage_to_gateway(None)
+    assert empty["input"] == 0 and empty["total"] == 0
+    print("ok usage_mapper")
+
+
+def test_translator_emits_gateway_events_in_order():
+    emitted = []
+    t = ccr.GatewayEventTranslator(lambda ev, pl=None: emitted.append((ev, pl)))
+    sid = "abc"
+    t.handle(ccr.ClaudeCodeEvent(kind="init", raw={"model": "claude-x"}, session_id=sid))
+    t.handle(ccr.ClaudeCodeEvent(kind="assistant_text", raw={}, text="Hel", session_id=sid))
+    t.handle(ccr.ClaudeCodeEvent(
+        kind="tool_use",
+        raw={"message": {"content": [{"type": "tool_use", "name": "Edit"},
+                                      {"type": "text", "text": "lo"}]}},
+        text="lo", session_id=sid))
+    t.handle(ccr.ClaudeCodeEvent(
+        kind="result", raw={}, text="all done", session_id=sid,
+        usage={"input_tokens": 7, "output_tokens": 3}, num_turns=1, is_error=False))
+
+    assert t.session_id == sid and t.model == "claude-x"
+    assert emitted[0] == ("message.delta", {"text": "Hel"})
+    assert ("tool.generating", {"name": "Edit"}) in emitted
+    assert ("message.delta", {"text": "lo"}) in emitted
+    last_ev, last_pl = emitted[-1]
+    assert last_ev == "message.complete"
+    assert last_pl["text"] == "all done" and last_pl["status"] == "complete"
+    assert last_pl["usage"]["input"] == 7 and last_pl["usage"]["total"] == 10
+    print("ok translator_order")
+
+
+def test_translator_finalize_when_no_result():
+    emitted = []
+    t = ccr.GatewayEventTranslator(lambda ev, pl=None: emitted.append((ev, pl)))
+    t.handle(ccr.ClaudeCodeEvent(kind="assistant_text", raw={}, text="partial"))
+    # CLI died before a result event — finalize must still close the turn
+    t.finalize(error_message="claude crashed")
+    assert ("error", {"message": "claude crashed"}) in emitted
+    assert emitted[-1][0] == "message.complete" and emitted[-1][1]["status"] == "error"
+    # idempotent: a real result already completed → finalize is a no-op
+    e2 = []
+    t2 = ccr.GatewayEventTranslator(lambda ev, pl=None: e2.append((ev, pl)))
+    t2.handle(ccr.ClaudeCodeEvent(kind="result", raw={}, text="ok", is_error=False))
+    n_before = len(e2)
+    t2.finalize()
+    assert len(e2) == n_before
+    print("ok translator_finalize")
 
 
 if __name__ == "__main__":

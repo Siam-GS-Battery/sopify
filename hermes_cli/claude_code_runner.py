@@ -254,6 +254,104 @@ def run_claude_code(
     return result
 
 
+# ── gateway adapter ──────────────────────────────────────────────────────
+# Translates runner events into the JSON-RPC event vocabulary the dashboard
+# chat UI already speaks (see tui_gateway/server.py::_emit). Pure: it takes an
+# ``emit(event_name, payload)`` callable, so it is testable without the live
+# gateway and the gateway wiring (next slice) stays a thin call site.
+
+def claude_usage_to_gateway(
+    usage: Optional[dict],
+    model: Optional[str] = None,
+    num_turns: Optional[int] = None,
+) -> dict:
+    """Map Claude Code's ``result.usage`` to the gateway's usage dict shape.
+
+    The dashboard reads keys ``input``/``output``/``cache_read`` etc. (NOT the
+    ``*_tokens`` names the CLI uses), matching tui_gateway _get_usage.
+    """
+    usage = usage or {}
+    inp = _int(usage.get("input_tokens"))
+    out = _int(usage.get("output_tokens"))
+    return {
+        "model": model or "",
+        "input": inp,
+        "output": out,
+        "cache_read": _int(usage.get("cache_read_input_tokens")),
+        "cache_write": _int(usage.get("cache_creation_input_tokens")),
+        "reasoning": 0,
+        "prompt": inp,
+        "completion": out,
+        "total": inp + out,
+        "calls": num_turns or 0,
+    }
+
+
+class GatewayEventTranslator:
+    """Feed ClaudeCodeEvents in, get gateway events out via ``emit``.
+
+    Usage mirrors the existing turn flow: the caller emits ``message.start``,
+    runs the turn with ``on_event=translator.handle``, then calls
+    ``finalize()`` to guarantee a terminal ``message.complete`` even if the CLI
+    died mid-stream (so the UI never hangs waiting).
+    """
+
+    def __init__(self, emit: Callable[[str, Optional[dict]], None]):
+        self.emit = emit
+        self.session_id: Optional[str] = None
+        self.model: Optional[str] = None
+        self.final_text: str = ""
+        self.usage: dict = {}
+        self._completed = False
+
+    def handle(self, event: ClaudeCodeEvent) -> None:
+        if event.session_id and not self.session_id:
+            self.session_id = event.session_id
+        if event.kind == "init":
+            self.model = event.raw.get("model") or self.model
+        elif event.kind == "assistant_text":
+            if event.text:
+                self.emit("message.delta", {"text": event.text})
+        elif event.kind == "tool_use":
+            for name in _tool_names(event.raw):
+                self.emit("tool.generating", {"name": name})
+            if event.text:
+                self.emit("message.delta", {"text": event.text})
+        elif event.kind == "result":
+            self.final_text = event.text or ""
+            self.usage = claude_usage_to_gateway(event.usage, self.model, event.num_turns)
+            self._emit_complete("error" if event.is_error else "complete")
+        # init handled above; tool_result / raw carry nothing for the UI.
+
+    def finalize(self, *, error_message: Optional[str] = None) -> None:
+        """Emit a terminal event if the result event never arrived."""
+        if error_message and not self._completed:
+            self.emit("error", {"message": error_message})
+        if not self._completed:
+            self._emit_complete("error" if error_message else "complete")
+
+    def _emit_complete(self, status: str) -> None:
+        self.emit("message.complete",
+                  {"text": self.final_text, "usage": self.usage, "status": status})
+        self._completed = True
+
+
+def _tool_names(raw: object) -> List[str]:
+    msg = raw.get("message") if isinstance(raw, dict) else None
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [b.get("name") for b in content
+            if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name")]
+
+
+def _int(value: object) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
 # ── helpers ────────────────────────────────────────────────────────────────
 
 def _extract_text(message: object) -> Optional[str]:
