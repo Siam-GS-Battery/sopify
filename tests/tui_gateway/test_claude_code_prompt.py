@@ -312,6 +312,29 @@ def test_claude_engine_passes_phase_model():
     print("ok passes_phase_model")
 
 
+def test_env_model_override_wins_over_picker():
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        _vm, pdir = _setup(home, "myapp")  # picker -> alibaba/qwen3-coder-plus
+        _install_fake_claude(home / "bin")
+        s, _events = _capture_server()
+        s._get_db = lambda: None
+        os.environ["SOPIFY_CLAUDE_CODE_MODEL"] = "alibaba/my-relay-model"
+        try:
+            session = {
+                "history_lock": threading.Lock(), "running": True,
+                "vibe_project": "myapp", "engine": "claude_code", "session_key": "k",
+            }
+            s._run_prompt_submit_claude_code("r", "sid", session, "hi")
+        finally:
+            os.environ.pop("SOPIFY_CLAUDE_CODE_MODEL", None)
+        argv = (pdir / "CLAUDE_ARGV.txt").read_text()
+        # the env override wins (prefix stripped); the picker model is NOT used
+        assert "--model my-relay-model" in argv
+        assert "qwen3-coder-plus" not in argv
+    print("ok env_model_override")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
