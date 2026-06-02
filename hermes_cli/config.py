@@ -4796,6 +4796,25 @@ def _check_non_ascii_credential(key: str, value: str) -> str:
     return sanitized
 
 
+def _resolve_env_write_path(env_path):
+    """Resolve ~/.hermes/.env through a symlink before an atomic write.
+
+    In the sandbox, ~/.hermes/.env is a symlink to the host's real file. An
+    atomic write (tmp + os.replace) onto the symlink PATH replaces the symlink
+    with a sandbox-local regular file — so the value never reaches the host and
+    is silently lost when the sandbox re-links on its next launch (the env you
+    set on the Keys page "disappears on refresh"). Writing to the real target
+    keeps the symlink and persists to the host; the temp file also lands on the
+    target's filesystem, so the replace stays atomic.
+    """
+    try:
+        if env_path.is_symlink():
+            return Path(os.path.realpath(env_path))
+    except OSError:
+        pass
+    return env_path
+
+
 def save_env_value(key: str, value: str):
     """Save or update a value in ~/.hermes/.env."""
     if is_managed():
@@ -4807,7 +4826,7 @@ def save_env_value(key: str, value: str):
     # API keys / tokens must be ASCII — strip non-ASCII with a warning.
     value = _check_non_ascii_credential(key, value)
     ensure_hermes_home()
-    env_path = get_env_path()
+    env_path = _resolve_env_write_path(get_env_path())
 
     # On Windows, open() defaults to the system locale (cp1252) which can
     # cause OSError errno 22 on UTF-8 .env files.
@@ -4877,7 +4896,7 @@ def remove_env_value(key: str) -> bool:
         return False
     if not _ENV_VAR_NAME_RE.match(key):
         raise ValueError(f"Invalid environment variable name: {key!r}")
-    env_path = get_env_path()
+    env_path = _resolve_env_write_path(get_env_path())
     if not env_path.exists():
         os.environ.pop(key, None)
         return False
