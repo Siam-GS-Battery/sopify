@@ -573,11 +573,16 @@ function DesignPane({
 
   // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
   // unrelated localhost servers detected by the gateway don't hijack the
-  // iframe. Returns null when 5174 isn't running.
+  // iframe.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
+  // Keep the preview panel open from the start of the Design phase, pinned to
+  // the fixed Vite port, even before the gateway detects a running dev server.
+  // Once one is detected we use its url; until then the iframe points at the
+  // predefined localhost:5174 (blank until the server comes up).
+  const previewUrl = currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
-    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
-    [currentServer, reloadKey],
+    () => `${previewUrl}#${reloadKey}`,
+    [previewUrl, reloadKey],
   );
 
   // Resizable split — same wiring as BuildingPane. Shares SPLIT_STORAGE_KEY
