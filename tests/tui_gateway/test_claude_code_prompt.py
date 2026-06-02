@@ -335,6 +335,54 @@ def test_env_model_override_wins_over_picker():
     print("ok env_model_override")
 
 
+# Emits a Bash tool_use (dev-server command) + a localhost URL in its output.
+_FAKE_DEVSERVER = """#!/usr/bin/env python3
+import json, sys
+sid = "dddddddd-1111-2222-3333-444444444444"
+for o in [
+    {"type": "system", "subtype": "init", "session_id": sid},
+    {"type": "assistant", "session_id": sid,
+     "message": {"content": [{"type": "tool_use", "name": "Bash",
+                              "input": {"command": "npm run dev"}}]}},
+    {"type": "assistant", "session_id": sid,
+     "message": {"content": [{"type": "text", "text": "Server: http://localhost:5174/"}]}},
+    {"type": "result", "subtype": "success", "is_error": False, "session_id": sid,
+     "result": "started", "num_turns": 1, "usage": {"input_tokens": 1, "output_tokens": 1}},
+]:
+    print(json.dumps(o)); sys.stdout.flush()
+"""
+
+
+def test_claude_dev_server_is_kept_alive():
+    import hermes_cli.dev_server_manager as dsm
+    with tempfile.TemporaryDirectory() as t:
+        home = Path(t)
+        _vm, pdir = _setup(home, "myapp")
+        _install_fake(home / "bin", _FAKE_DEVSERVER)
+        s, _events = _capture_server()
+        s._get_db = lambda: None
+        # capture the persistence call instead of spawning a real server
+        calls = []
+        orig = dsm.ensure_running
+        dsm.ensure_running = lambda *a, **k: calls.append((a, k))
+        try:
+            session = {
+                "history_lock": threading.Lock(), "running": True,
+                "vibe_project": "myapp", "engine": "claude_code", "session_key": "k",
+            }
+            s._run_prompt_submit_claude_code("r", "sid", session, "เปิด server")
+        finally:
+            dsm.ensure_running = orig
+        assert len(calls) == 1, "ensure_running should be called to persist the dev server"
+        args, _ = calls[0]
+        session_key, port, url, command, cwd = args[:5]
+        assert session_key == "k" and port == 5174
+        assert "5174" in url and command == "npm run dev"
+        # cwd is the project dir (resolve() to dodge macOS /var -> /private/var)
+        assert Path(cwd).resolve() == pdir.resolve()
+    print("ok dev_server_kept_alive")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
