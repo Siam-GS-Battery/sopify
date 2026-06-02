@@ -528,6 +528,39 @@ def _revive_spec(spec: DevServerSpec) -> bool:
     return True
 
 
+def ensure_running(
+    session_key: str,
+    port: int,
+    url: str,
+    command: Optional[str],
+    cwd: Optional[str],
+    vibe_project: Optional[str] = None,
+) -> Optional["DevServerSpec"]:
+    """Make a dev server persist beyond the turn that started it.
+
+    The Claude Code engine runs the dev server inside a headless ``claude -p``
+    turn; when that process exits its children (vite, etc.) are reaped, so the
+    Live preview goes blank a moment later. This records the server (command +
+    cwd, for revive) and re-spawns it under the persistent dashboard process via
+    _revive_spec (setsid), so it survives across turns.
+
+    Non-destructive: _revive_spec waits for the port to free first, so if the
+    turn's server is somehow still alive it keeps the port and we no-op.
+    """
+    if not session_key or not port:
+        return None
+    spec = register_detected_url(
+        session_key, port, url,
+        command_hint=command, cwd_hint=cwd, vibe_project=vibe_project,
+    )
+    if spec.command and spec.cwd:
+        try:
+            _revive_spec(spec)
+        except Exception as e:  # noqa: BLE001 — best-effort persistence
+            _log.warning("dev-server ensure_running revive failed: %s", e)
+    return spec
+
+
 def stop_server(session_key: str, port: int) -> bool:
     """Manual stop button — pause this one spec without touching others."""
     with _registry_lock:

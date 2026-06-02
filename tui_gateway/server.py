@@ -3569,6 +3569,40 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
             vibe_model = _resolve_vibe_model_for_session(session)
             cc_model = vibe_model if vibe_model else None
         cc_model = cc_model.split("/", 1)[-1] if cc_model else None
+
+        # Watch the stream for a dev-server URL + the command that launched it,
+        # so we can keep it alive after the turn. claude runs it as a child of
+        # the headless `claude -p` process, which dies when the turn ends —
+        # taking the dev server with it (the Live preview goes blank). We capture
+        # the intent here and re-spawn under the dashboard below.
+        try:
+            from hermes_cli import dev_server_manager as _dsm
+        except Exception:  # noqa: BLE001 — PTY/subprocess gateway has no dsm
+            _dsm = None
+        _dev = {"cmd": None, "hit": None}
+
+        def _on_cc_event(ev):
+            translator.handle(ev)
+            if _dsm is None:
+                return
+            try:
+                if ev.kind == "tool_use":
+                    msg = ev.raw.get("message") if isinstance(ev.raw, dict) else None
+                    for b in (msg.get("content") if isinstance(msg, dict) else []) or []:
+                        if (isinstance(b, dict) and b.get("type") == "tool_use"
+                                and isinstance(b.get("input"), dict)):
+                            c = b["input"].get("command")
+                            if isinstance(c, str) and any(
+                                    k in c for k in ("vite", "dev", "next", "astro", "serve")):
+                                _dev["cmd"] = c
+                txt = ev.text or ""
+                if not txt and ev.kind in ("tool_result", "raw"):
+                    txt = json.dumps(ev.raw)
+                if txt and _dev["hit"] is None:
+                    _dev["hit"] = _dsm.extract_dev_url(txt)
+            except Exception:  # noqa: BLE001
+                logger.exception("[tui_gateway] claude_code dev-server watch failed")
+
         result = run_claude_code(
             str(text),
             cwd=str(cwd),
@@ -3576,7 +3610,7 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
             resume=bool(existing),
             model=cc_model,
             permission_mode=permission_mode,
-            on_event=translator.handle,
+            on_event=_on_cc_event,
         )
         # Self-heal a stale session id: the stored id can point at a session the
         # CLI never actually created (e.g. an earlier turn that failed before
@@ -3593,7 +3627,7 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
                 resume=False,
                 model=cc_model,
                 permission_mode=permission_mode,
-                on_event=translator.handle,
+                on_event=_on_cc_event,
             )
         # Persist the session id ONLY on success — storing it after a failure is
         # what created the phantom-session loop above.
@@ -3611,6 +3645,18 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
         # chat would come back empty. Success only; best-effort.
         if not result.is_error:
             _persist_claude_turn(session.get("session_key"), str(text), result.final_text)
+        # Keep a dev server claude started alive past this turn: its process is a
+        # child of the now-exited `claude -p`, so re-spawn it under the dashboard
+        # (persistent) — otherwise the Live preview goes blank seconds later.
+        if _dsm is not None and not result.is_error and _dev["hit"]:
+            try:
+                _port, _url = _dev["hit"]
+                _dsm.ensure_running(
+                    session.get("session_key"), _port, _url,
+                    _dev["cmd"], str(cwd), vibe_project=project,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("[tui_gateway] claude_code ensure_running failed")
         err = None
         if result.is_error and not result.final_text:
             if result.timed_out:
