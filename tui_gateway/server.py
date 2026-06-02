@@ -3555,13 +3555,20 @@ def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> N
         permission_mode = os.environ.get(
             "SOPIFY_CLAUDE_CODE_PERMISSION_MODE", "bypassPermissions"
         )
-        # Use the project's per-phase model (the picker) — strip the
-        # "<provider>/" prefix so the CLI gets the bare model id the endpoint
-        # expects (e.g. "qwen3-coder-plus" via a relay, or "claude-sonnet-4-6").
-        # Without this the CLI uses its own default (Opus), ignoring the picker
-        # and risking a model the relay doesn't serve.
-        vibe_model = _resolve_vibe_model_for_session(session)
-        cc_model = vibe_model.split("/", 1)[-1] if vibe_model else None
+        # Which model the CLI uses, in priority order:
+        #   1. SOPIFY_CLAUDE_CODE_MODEL — one editable knob (the /env page) that
+        #      pins every Claude Code turn to one model. Best for a relay whose
+        #      endpoint serves a single model (e.g. qwen3-coder-plus), so you
+        #      don't have to set all six phases by hand and risk one staying on
+        #      a model the relay can't serve.
+        #   2. the project's per-phase model (the picker).
+        #   3. None → the CLI's own default.
+        # Strip any "<provider>/" prefix so the CLI gets the bare model id.
+        cc_model = (os.environ.get("SOPIFY_CLAUDE_CODE_MODEL") or "").strip()
+        if not cc_model:
+            vibe_model = _resolve_vibe_model_for_session(session)
+            cc_model = vibe_model if vibe_model else None
+        cc_model = cc_model.split("/", 1)[-1] if cc_model else None
         result = run_claude_code(
             str(text),
             cwd=str(cwd),

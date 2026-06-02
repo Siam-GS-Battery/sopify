@@ -533,7 +533,7 @@ if ! grep -qF '# >>> sopify claude-code env (PR 1.2) >>>' "$profile" 2>/dev/null
 # from the linked ~/.hermes/.env (written via the dashboard /env page).
 __hermes_env="$HOME/.hermes/.env"
 if [ -f "$__hermes_env" ]; then
-  for __k in ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_TOKEN CLAUDE_CODE_OAUTH_TOKEN; do
+  for __k in ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_TOKEN CLAUDE_CODE_OAUTH_TOKEN SOPIFY_CLAUDE_CODE_MODEL SOPIFY_CLAUDE_CODE_PERMISSION_MODE; do
     __v=$(grep -E "^[[:space:]]*${__k}=" "$__hermes_env" 2>/dev/null | tail -n1 | cut -d= -f2-)
     __v=${__v%\"}; __v=${__v#\"}; __v=${__v%\'}; __v=${__v#\'}
     [ -n "$__v" ] && export "${__k}=${__v}"

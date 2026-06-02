@@ -1783,6 +1783,22 @@ OPTIONAL_ENV_VARS = {
         "category": "provider",
         "advanced": True,
     },
+    "SOPIFY_CLAUDE_CODE_MODEL": {
+        "description": "Model the Vibe Code Claude Code engine uses every turn (e.g. qwen3-coder-plus via a relay). Overrides the per-phase picker; empty = use the picker.",
+        "prompt": "Claude Code model (empty = use the per-phase picker)",
+        "url": None,
+        "password": False,
+        "category": "provider",
+        "advanced": True,
+    },
+    "SOPIFY_CLAUDE_CODE_PERMISSION_MODE": {
+        "description": "Claude Code permission mode in the sandbox: bypassPermissions (default, runs npm/dev autonomously), acceptEdits, default, or plan.",
+        "prompt": "Claude Code permission mode (default: bypassPermissions)",
+        "url": None,
+        "password": False,
+        "category": "provider",
+        "advanced": True,
+    },
     "NOUS_BASE_URL": {
         "description": "Nous Portal base URL override",
         "prompt": "Nous Portal base URL (leave empty for default)",
