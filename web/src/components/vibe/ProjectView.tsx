@@ -548,6 +548,10 @@ function DesignPane({
     { port: number; url: string }[]
   >([]);
   const [reloadKey, setReloadKey] = useState(0);
+  // Editable preview target (host:port). Empty = auto: the detected dev server,
+  // else the predefined localhost:5174. Lets the user point the panel at any
+  // localhost:xxxx their app runs on.
+  const [previewTarget, setPreviewTarget] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
 
@@ -575,11 +579,12 @@ function DesignPane({
   // unrelated localhost servers detected by the gateway don't hijack the
   // iframe.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
-  // Keep the preview panel open from the start of the Design phase, pinned to
-  // the fixed Vite port, even before the gateway detects a running dev server.
-  // Once one is detected we use its url; until then the iframe points at the
-  // predefined localhost:5174 (blank until the server comes up).
-  const previewUrl = currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
+  // Preview target: the user's override (header input) wins; otherwise the
+  // detected dev server, else the predefined localhost:5174. previewSrc is
+  // always set so the panel stays open from the start of the phase.
+  const previewUrl = previewTarget.trim()
+    ? `http://${previewTarget.trim()}/`
+    : currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
     () => `${previewUrl}#${reloadKey}`,
     [previewUrl, reloadKey],
@@ -755,9 +760,14 @@ function DesignPane({
                 Live preview
               </Typography>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                  {currentServer?.url}
-                </span>
+                <input
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  placeholder={currentServer?.url ?? `localhost:${VIBE_DEV_PORT}`}
+                  spellCheck={false}
+                  aria-label="Preview host:port"
+                  className="w-44 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground/90 focus:border-primary/50 focus:outline-none"
+                />
                 <Button
                   ghost
                   size="icon"
@@ -875,6 +885,10 @@ function BackendPane({
     { port: number; url: string }[]
   >([]);
   const [reloadKey, setReloadKey] = useState(0);
+  // Editable preview target (host:port). Empty = auto: the detected dev server,
+  // else the predefined localhost:5174. Lets the user point the panel at any
+  // localhost:xxxx their app runs on.
+  const [previewTarget, setPreviewTarget] = useState("");
   const [activeTab, setActiveTab] = useState<BackendTab>("database");
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
@@ -901,13 +915,17 @@ function BackendPane({
     };
   }, [project.name]);
 
-  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
-  // unrelated localhost servers detected by the gateway don't hijack the
-  // iframe. Returns null when 5174 isn't running.
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port. Preview
+  // target: the user's override (header input) wins; otherwise the detected dev
+  // server, else the predefined localhost:5174. previewSrc is always set so the
+  // panel stays open from the start of the phase.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
+  const previewUrl = previewTarget.trim()
+    ? `http://${previewTarget.trim()}/`
+    : currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
-    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
-    [currentServer, reloadKey],
+    () => `${previewUrl}#${reloadKey}`,
+    [previewUrl, reloadKey],
   );
 
   // Resizable split — same wiring as DesignPane / BuildingPane.
@@ -1107,9 +1125,14 @@ function BackendPane({
             </div>
             {activeTab === "preview" && previewSrc && (
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                  {currentServer?.url}
-                </span>
+                <input
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  placeholder={currentServer?.url ?? `localhost:${VIBE_DEV_PORT}`}
+                  spellCheck={false}
+                  aria-label="Preview host:port"
+                  className="w-44 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground/90 focus:border-primary/50 focus:outline-none"
+                />
                 <Button
                   ghost
                   size="icon"
@@ -1246,19 +1269,27 @@ function ImprovementPane({
   onRefresh: () => void;
 }) {
   const [reloadKey, setReloadKey] = useState(0);
+  // Editable preview target (host:port). Empty = auto: the detected dev server,
+  // else the predefined localhost:5174. Lets the user point the panel at any
+  // localhost:xxxx their app runs on.
+  const [previewTarget, setPreviewTarget] = useState("");
   const [devServers, setDevServers] = useState<
     { port: number; url: string }[]
   >([]);
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
 
-  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
-  // unrelated localhost servers detected by the gateway don't hijack the
-  // iframe. Returns null when 5174 isn't running.
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port. Preview
+  // target: the user's override (header input) wins; otherwise the detected dev
+  // server, else the predefined localhost:5174. previewSrc is always set so the
+  // panel stays open from the start of the phase.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
+  const previewUrl = previewTarget.trim()
+    ? `http://${previewTarget.trim()}/`
+    : currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
-    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
-    [currentServer, reloadKey],
+    () => `${previewUrl}#${reloadKey}`,
+    [previewUrl, reloadKey],
   );
 
   // Resizable split — same wiring as Design / Backend.
@@ -1428,9 +1459,14 @@ function ImprovementPane({
                 Live preview
               </Typography>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                  {currentServer?.url}
-                </span>
+                <input
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  placeholder={currentServer?.url ?? `localhost:${VIBE_DEV_PORT}`}
+                  spellCheck={false}
+                  aria-label="Preview host:port"
+                  className="w-44 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground/90 focus:border-primary/50 focus:outline-none"
+                />
                 <Button
                   ghost
                   size="icon"
