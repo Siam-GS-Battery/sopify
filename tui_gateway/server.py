@@ -2387,6 +2387,11 @@ def _(rid, params: dict) -> dict:
     vibe_project = params.get("vibe_project")
     vibe_project = vibe_project.strip() if isinstance(vibe_project, str) else None
 
+    # Engine selector — "claude_code" routes prompts to the Claude Code CLI
+    # (Surface A) instead of the in-process Hermes agent. Anything else (incl.
+    # absent) keeps the existing Hermes path. See _run_prompt_submit_claude_code.
+    engine = _normalize_engine(params.get("engine"))
+
     ready = threading.Event()
 
     _sessions[sid] = {
@@ -2409,6 +2414,7 @@ def _(rid, params: dict) -> dict:
         "tool_started_at": {},
         "transport": current_transport() or _stdio_transport,
         "vibe_project": vibe_project or None,
+        "engine": engine,
     }
 
     # Return the lightweight session immediately so Ink can paint the composer
@@ -2570,6 +2576,7 @@ def _(rid, params: dict) -> dict:
     # when the session was first created.
     vibe_project = params.get("vibe_project")
     vibe_project = vibe_project.strip() if isinstance(vibe_project, str) else None
+    engine = _normalize_engine(params.get("engine"))
     vibe_model = (
         _resolve_vibe_model_for_session({"vibe_project": vibe_project})
         if vibe_project
@@ -2590,6 +2597,8 @@ def _(rid, params: dict) -> dict:
         _init_session(sid, target, agent, history, cols=int(params.get("cols", 80)))
         if vibe_project:
             _sessions[sid]["vibe_project"] = vibe_project
+        if engine:
+            _sessions[sid]["engine"] = engine
     except Exception as e:
         return _err(rid, 5000, f"resume failed: {e}")
 
@@ -3343,6 +3352,17 @@ def _(rid, params: dict) -> dict:
     # doesn't change active; explicit interaction does.
     _set_active_session_for_sid(sid)
 
+    # Claude Code engine (Surface A): skip the Hermes agent build entirely and
+    # drive the turn through the CLI subprocess. Flag-gated — Hermes sessions
+    # fall through to the unchanged path below. running was set True above; the
+    # claude worker clears it in its finally.
+    if session.get("engine") == "claude_code":
+        threading.Thread(
+            target=_run_prompt_submit_claude_code,
+            args=(rid, sid, session, text), daemon=True,
+        ).start()
+        return _ok(rid, {"status": "streaming"})
+
     _start_agent_build(sid, session)
 
     def run_after_agent_ready() -> None:
@@ -3463,6 +3483,194 @@ def _start_notification_poller(sid: str, session: dict) -> threading.Event:
     )
     t.start()
     return stop
+
+
+def _persist_claude_turn(session_key, user_text: str, assistant_text: str) -> None:
+    """Append a Claude Code turn (user + assistant) to the gateway session DB.
+
+    The claude path streams to the UI but writes nothing to the DB, so on
+    reload / session switch session.resume replays an empty history and the chat
+    looks wiped. Persisting the turn here makes it survive. Best-effort: a DB
+    hiccup must never break the turn.
+    """
+    if not session_key:
+        return
+    db = _get_db()
+    if db is None:
+        return
+    try:
+        db.append_message(session_key, role="user", content=user_text)
+        if assistant_text:
+            db.append_message(session_key, role="assistant", content=assistant_text)
+    except Exception:  # noqa: BLE001
+        logger.exception("[tui_gateway] claude_code: failed to persist turn")
+
+
+def _normalize_engine(value: Any) -> str | None:
+    """Return ``"claude_code"`` for that engine, else None (= Hermes default)."""
+    return "claude_code" if isinstance(value, str) and value.strip() == "claude_code" else None
+
+
+def _run_prompt_submit_claude_code(rid, sid: str, session: dict, text: Any) -> None:
+    """Run one turn through the Claude Code CLI instead of the Hermes agent.
+
+    Surface A of the integration: a Vibe Code project chats with `claude`
+    directly. We resume the project's pinned session id (so it remembers prior
+    turns — Q3), stream the CLI's events back as the same gateway events the UI
+    already renders, and persist the session id on the first turn. Runs in the
+    daemon thread spawned by prompt.submit; clears ``running`` in finally so a
+    crash can never wedge the session as busy.
+    """
+    from hermes_cli.claude_code_runner import (
+        GatewayEventTranslator,
+        new_session_id,
+        record_claude_code_usage,
+        run_claude_code,
+    )
+    from hermes_cli.vibe_models import (
+        get_claude_session_id,
+        set_claude_session_id,
+        vibe_project_dir,
+    )
+
+    project = session.get("vibe_project")
+    cwd = vibe_project_dir(project) if project else None
+    _emit("message.start", sid)
+    translator = GatewayEventTranslator(lambda ev, pl=None: _emit(ev, sid, pl))
+    try:
+        if not project or cwd is None:
+            translator.finalize(error_message=(
+                "Claude Code engine needs a Vibe Code project bound to this session."
+            ))
+            return
+        existing = get_claude_session_id(project)
+        cc_sid = existing or new_session_id()
+        # Default bypassPermissions: this is an isolated sandbox and there is no
+        # human to answer tool prompts in the headless stream, so acceptEdits
+        # (edits-only) left the agent unable to run npm / start a dev server and
+        # looping on "approve this command". bypass lets it work autonomously in
+        # its project dir. Override with SOPIFY_CLAUDE_CODE_PERMISSION_MODE to
+        # restrict (e.g. "acceptEdits"). Trust boundary matches Hermes' own
+        # terminal tool — the sandbox mounts the user's own ~/.hermes.
+        permission_mode = os.environ.get(
+            "SOPIFY_CLAUDE_CODE_PERMISSION_MODE", "bypassPermissions"
+        )
+        # Which model the CLI uses, in priority order:
+        #   1. SOPIFY_CLAUDE_CODE_MODEL — one editable knob (the /env page) that
+        #      pins every Claude Code turn to one model. Best for a relay whose
+        #      endpoint serves a single model (e.g. qwen3-coder-plus), so you
+        #      don't have to set all six phases by hand and risk one staying on
+        #      a model the relay can't serve.
+        #   2. the project's per-phase model (the picker).
+        #   3. None → the CLI's own default.
+        # Strip any "<provider>/" prefix so the CLI gets the bare model id.
+        cc_model = (os.environ.get("SOPIFY_CLAUDE_CODE_MODEL") or "").strip()
+        if not cc_model:
+            vibe_model = _resolve_vibe_model_for_session(session)
+            cc_model = vibe_model if vibe_model else None
+        cc_model = cc_model.split("/", 1)[-1] if cc_model else None
+
+        # Watch the stream for a dev-server URL + the command that launched it,
+        # so we can keep it alive after the turn. claude runs it as a child of
+        # the headless `claude -p` process, which dies when the turn ends —
+        # taking the dev server with it (the Live preview goes blank). We capture
+        # the intent here and re-spawn under the dashboard below.
+        try:
+            from hermes_cli import dev_server_manager as _dsm
+        except Exception:  # noqa: BLE001 — PTY/subprocess gateway has no dsm
+            _dsm = None
+        _dev = {"cmd": None, "hit": None}
+
+        def _on_cc_event(ev):
+            translator.handle(ev)
+            if _dsm is None:
+                return
+            try:
+                if ev.kind == "tool_use":
+                    msg = ev.raw.get("message") if isinstance(ev.raw, dict) else None
+                    for b in (msg.get("content") if isinstance(msg, dict) else []) or []:
+                        if (isinstance(b, dict) and b.get("type") == "tool_use"
+                                and isinstance(b.get("input"), dict)):
+                            c = b["input"].get("command")
+                            if isinstance(c, str) and any(
+                                    k in c for k in ("vite", "dev", "next", "astro", "serve")):
+                                _dev["cmd"] = c
+                txt = ev.text or ""
+                if not txt and ev.kind in ("tool_result", "raw"):
+                    txt = json.dumps(ev.raw)
+                if txt and _dev["hit"] is None:
+                    _dev["hit"] = _dsm.extract_dev_url(txt)
+            except Exception:  # noqa: BLE001
+                logger.exception("[tui_gateway] claude_code dev-server watch failed")
+
+        result = run_claude_code(
+            str(text),
+            cwd=str(cwd),
+            session_id=cc_sid,
+            resume=bool(existing),
+            model=cc_model,
+            permission_mode=permission_mode,
+            on_event=_on_cc_event,
+        )
+        # Self-heal a stale session id: the stored id can point at a session the
+        # CLI never actually created (e.g. an earlier turn that failed before
+        # claude wrote the transcript), so --resume errors "No conversation
+        # found". Retry once with a fresh session instead of failing forever.
+        if (existing and result.is_error
+                and "No conversation found" in (result.stderr_tail or "")):
+            cc_sid = new_session_id()
+            existing = None
+            result = run_claude_code(
+                str(text),
+                cwd=str(cwd),
+                session_id=cc_sid,
+                resume=False,
+                model=cc_model,
+                permission_mode=permission_mode,
+                on_event=_on_cc_event,
+            )
+        # Persist the session id ONLY on success — storing it after a failure is
+        # what created the phantom-session loop above.
+        if not result.is_error:
+            store = result.session_id or cc_sid
+            if store and store != existing:
+                set_claude_session_id(project, store)
+        # Attribute this turn's tokens to claude_code in the sessions DB so the
+        # dashboard can split usage by engine (Phase 4). Keyed by the durable
+        # session_key; best-effort (never raises). Also creates the session row.
+        record_claude_code_usage(_get_db(), session.get("session_key"), result)
+        # Persist the turn (user + assistant) to the gateway session DB so it
+        # survives reload / switching sessions — session.resume replays messages
+        # from the DB, and the claude path otherwise writes nothing there, so the
+        # chat would come back empty. Success only; best-effort.
+        if not result.is_error:
+            _persist_claude_turn(session.get("session_key"), str(text), result.final_text)
+        # Keep a dev server claude started alive past this turn: its process is a
+        # child of the now-exited `claude -p`, so re-spawn it under the dashboard
+        # (persistent) — otherwise the Live preview goes blank seconds later.
+        if _dsm is not None and not result.is_error and _dev["hit"]:
+            try:
+                _port, _url = _dev["hit"]
+                _dsm.ensure_running(
+                    session.get("session_key"), _port, _url,
+                    _dev["cmd"], str(cwd), vibe_project=project,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("[tui_gateway] claude_code ensure_running failed")
+        err = None
+        if result.is_error and not result.final_text:
+            if result.timed_out:
+                err = "Claude Code timed out."
+            else:
+                detail = result.stderr_tail or f"exit code {result.returncode}"
+                err = f"Claude Code failed — {detail}"
+        translator.finalize(error_message=err)
+    except Exception as exc:  # noqa: BLE001 — a turn must never crash the gateway
+        logger.exception("[tui_gateway] claude_code prompt failed")
+        translator.finalize(error_message=f"Claude Code run failed: {exc}")
+    finally:
+        with session["history_lock"]:
+            session["running"] = False
 
 
 def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:

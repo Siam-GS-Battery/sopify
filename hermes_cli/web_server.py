@@ -3385,6 +3385,24 @@ async def get_usage_analytics(days: int = 30):
         """, (cutoff,))
         by_model = [dict(r) for r in cur2.fetchall()]
 
+        # Per-engine split (Phase 4) — powers the Vibe Code monitoring cards:
+        # one row per agent_kind ('hermes' vs 'claude_code'). COALESCE guards
+        # any pre-migration NULLs into the Hermes bucket.
+        cur_ak = db._conn.execute("""
+            SELECT COALESCE(agent_kind, 'hermes') as agent_kind,
+                   SUM(input_tokens) as input_tokens,
+                   SUM(output_tokens) as output_tokens,
+                   SUM(cache_read_tokens) as cache_read_tokens,
+                   SUM(reasoning_tokens) as reasoning_tokens,
+                   COALESCE(SUM(estimated_cost_usd), 0) as estimated_cost,
+                   COALESCE(SUM(actual_cost_usd), 0) as actual_cost,
+                   COUNT(*) as sessions,
+                   SUM(COALESCE(api_call_count, 0)) as api_calls
+            FROM sessions WHERE started_at > ?
+            GROUP BY COALESCE(agent_kind, 'hermes') ORDER BY agent_kind
+        """, (cutoff,))
+        by_agent_kind = [dict(r) for r in cur_ak.fetchall()]
+
         cur3 = db._conn.execute("""
             SELECT SUM(input_tokens) as total_input,
                    SUM(output_tokens) as total_output,
@@ -3411,6 +3429,7 @@ async def get_usage_analytics(days: int = 30):
         return {
             "daily": daily,
             "by_model": by_model,
+            "by_agent_kind": by_agent_kind,
             "totals": totals,
             "period_days": days,
             "skills": skills,
@@ -5606,6 +5625,9 @@ class VibeProjectPatch(BaseModel):
     summary: Optional[str] = None
     session_id: Optional[str] = None
     phase: Optional[str] = None
+    # "claude_code" routes this project's chat to the Claude Code CLI; ""/
+    # "hermes"/"default" reverts to the Hermes agent. Omitted = unchanged.
+    engine: Optional[str] = None
 
 
 @app.patch("/api/vibe/projects/{name}")
@@ -5622,6 +5644,14 @@ async def vibe_update_project(name: str, body: VibeProjectPatch, request: Reques
         if body.phase not in _VIBE_PHASES:
             raise HTTPException(status_code=400, detail=f"unknown phase: {body.phase}")
         marker["phase"] = body.phase
+    if body.engine is not None:
+        eng = body.engine.strip()
+        if eng in ("", "hermes", "default"):
+            marker.pop("engine", None)          # revert to the Hermes default
+        elif eng == "claude_code":
+            marker["engine"] = "claude_code"
+        else:
+            raise HTTPException(status_code=400, detail=f"unknown engine: {body.engine}")
     _vibe_write_marker(d, marker)
     return {"ok": True, "project": marker}
 

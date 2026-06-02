@@ -54,6 +54,11 @@ _HERMES_CORE_TOOLS = [
     "clarify",
     # Code execution + delegation
     "execute_code", "delegate_task",
+    # Delegate a coding task to the Claude Code CLI. Gated on `claude` being on
+    # PATH via check_fn (i.e. inside the sandbox), so it self-hides elsewhere.
+    # Lives in the shared core list so both interactive Hermes and cron jobs
+    # (hermes-cron mirrors this) can call it — Surface B of the integration.
+    "claude_code_task",
     # Cronjob management
     "cronjob",
     # Cross-platform messaging (gated on gateway running via check_fn)

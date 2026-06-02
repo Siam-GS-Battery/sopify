@@ -506,7 +506,7 @@ export const api = {
     ),
   patchVibeProject: (
     name: string,
-    body: { summary?: string; session_id?: string; phase?: string },
+    body: { summary?: string; session_id?: string; phase?: string; engine?: string },
   ) =>
     fetchJSON<{ ok: boolean; project: VibeProjectMarker }>(
       `/api/vibe/projects/${encodeURIComponent(name)}`,
@@ -661,6 +661,9 @@ export interface VibeProjectMarker {
    * marked as addressed. Persisted on the marker so checks survive
    * reloads and re-runs of the review. */
   addressed_security_findings?: string[];
+  /** Chat engine for this project. "claude_code" routes Vibe Code chat to
+   * the Claude Code CLI (Surface A); absent/anything else = the Hermes agent. */
+  engine?: string | null;
 }
 
 export interface VibeProjectSummary {
@@ -932,9 +935,23 @@ export interface AnalyticsSkillsSummary {
   distinct_skills_used: number;
 }
 
+export interface AnalyticsAgentKindEntry {
+  agent_kind: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+  estimated_cost: number;
+  actual_cost: number;
+  sessions: number;
+  api_calls: number;
+}
+
 export interface AnalyticsResponse {
   daily: AnalyticsDailyEntry[];
   by_model: AnalyticsModelEntry[];
+  /** Per-engine split (hermes vs claude_code). Optional for older backends. */
+  by_agent_kind?: AnalyticsAgentKindEntry[];
   totals: {
     total_input: number;
     total_output: number;

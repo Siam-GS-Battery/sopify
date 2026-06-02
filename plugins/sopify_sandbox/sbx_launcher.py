@@ -501,6 +501,53 @@ if [ -n "$hermes_src" ]; then
     rm -rf "$vp"
   fi
   ln -sfn "$hermes_src/vibe-projects" "$vp"
+  # Expose Hermes skills to Claude Code (PR 2.4). Claude Code discovers
+  # user-level skills under ~/.claude/skills — the same SKILL.md layout as
+  # ~/.hermes/skills — so symlinking the whole dir lets the Vibe Code Claude
+  # engine reuse the project's existing Hermes skills (e.g. sopify-sdlc-*).
+  # Only ~/.claude/skills is touched; the rest of ~/.claude (Claude Code's own
+  # config) is left alone. ln -sfn is idempotent across relaunches.
+  if [ -d "$hermes_src/skills" ]; then
+    mkdir -p "$HOME/.claude"
+    ln -sfn "$hermes_src/skills" "$HOME/.claude/skills"
+  fi
+fi
+
+# Make the Hermes-managed Anthropic config reach the `claude` CLI. sbx runs
+# every command via ``bash -lc`` (login shell), which sources ~/.profile, so
+# appending an env block there means `claude` — whether spawned by sopify or
+# run directly inside the sandbox — inherits ANTHROPIC_BASE_URL plus a
+# Claude-Code-compatible credential. The single source of truth is the linked
+# ~/.hermes/.env (the dashboard /env page writes ANTHROPIC_BASE_URL there in
+# PR 1.3). Idempotent: a marker guard keeps repeated launches from stacking
+# duplicate blocks. NOTE: when ANTHROPIC_BASE_URL points at a relay host that
+# is not already in _AI_NO_PROXY (api.anthropic.com / openrouter.ai / ... are),
+# that host must be added there too or its traffic hits the gateway proxy.
+profile="$HOME/.profile"
+if ! grep -qF '# >>> sopify claude-code env (PR 1.2) >>>' "$profile" 2>/dev/null; then
+  cat >> "$profile" <<'PROFILE_EOF'
+
+# >>> sopify claude-code env (PR 1.2) >>>
+# Share the Hermes-managed Anthropic config with Claude Code, which reads
+# ANTHROPIC_BASE_URL + ANTHROPIC_API_KEY from its environment. Values come
+# from the linked ~/.hermes/.env (written via the dashboard /env page).
+__hermes_env="$HOME/.hermes/.env"
+if [ -f "$__hermes_env" ]; then
+  for __k in ANTHROPIC_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_TOKEN CLAUDE_CODE_OAUTH_TOKEN SOPIFY_CLAUDE_CODE_MODEL SOPIFY_CLAUDE_CODE_PERMISSION_MODE; do
+    __v=$(grep -E "^[[:space:]]*${__k}=" "$__hermes_env" 2>/dev/null | tail -n1 | cut -d= -f2-)
+    __v=${__v%\"}; __v=${__v#\"}; __v=${__v%\'}; __v=${__v#\'}
+    [ -n "$__v" ] && export "${__k}=${__v}"
+  done
+  # Hermes writes the "proxy-managed" sentinel when the real key lives elsewhere.
+  [ "$ANTHROPIC_API_KEY" = "proxy-managed" ] && unset ANTHROPIC_API_KEY
+  # Claude Code authenticates via ANTHROPIC_API_KEY; fall back to Hermes' token.
+  if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -n "${ANTHROPIC_TOKEN:-}" ]; then
+    export ANTHROPIC_API_KEY="$ANTHROPIC_TOKEN"
+  fi
+  unset __hermes_env __k __v
+fi
+# <<< sopify claude-code env (PR 1.2) <<<
+PROFILE_EOF
 fi
 
 # Dev-mode override decision is taken at exec-time inside ``inner_cmd``

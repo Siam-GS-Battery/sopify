@@ -30,6 +30,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ripgrep ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Pre-install Claude Code (CLI) globally so the sandbox can run `claude`
+# without a runtime npm fetch (network is restricted by ENCM no_proxy, so a
+# first-run `npm install -g` could be blocked). Pinned for reproducible
+# builds — bump CLAUDE_CODE_VERSION to upgrade. Lives here (root, before the
+# repo COPY) so the layer caches and source edits don't bust it. The npm
+# global bin lands in /usr/local/bin, already on PATH (see ENV above).
+ARG CLAUDE_CODE_VERSION=2.1.159
+RUN npm install -g --no-fund --no-audit \
+        @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
 # Copy uv from its dedicated image.
 COPY --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 
@@ -109,6 +119,8 @@ RUN /opt/sopify/.venv/bin/python -c "import yaml, fastapi, uvicorn, anthropic, p
 RUN test -f /opt/sopify/ui-tui/dist/entry.js \
     && test -f /opt/sopify/ui-tui/node_modules/@hermes/ink/package.json \
     && echo "tui bundle ok"
+# Confirm the runtime user (sopify) can invoke the globally-installed CLI.
+RUN claude --version
 RUN /opt/sopify/.venv/bin/python -c "import sys; sys.path.insert(0, '/opt/sopify'); \
                 from plugins.sopify_core import version; \
                 print('sopify build smoke:', version.full_version_string())"

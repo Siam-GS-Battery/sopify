@@ -149,6 +149,26 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
     [project.name],
   );
 
+  // Chat engine toggle. "claude_code" routes this project's chat to the Claude
+  // Code CLI (Surface A); the default is the Hermes agent. Persists to the
+  // marker so the choice survives reloads, then rehydrates the view.
+  const isClaudeCode = project.engine === "claude_code";
+  const [engineBusy, setEngineBusy] = useState(false);
+  const onToggleEngine = useCallback(async () => {
+    setEngineBusy(true);
+    try {
+      const res = await api.patchVibeProject(project.name, {
+        engine: isClaudeCode ? "" : "claude_code",
+      });
+      onUpdated(res.project);
+      onRefresh();
+    } catch {
+      // Non-fatal: leave the toggle on its previous state if the PATCH failed.
+    } finally {
+      setEngineBusy(false);
+    }
+  }, [project.name, isClaudeCode, onUpdated, onRefresh]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 pb-4 normal-case">
       {/* Horizontal stepper replaces the old top header + right rail
@@ -173,7 +193,28 @@ export function ProjectView({ data, onBack, onUpdated, onRefresh }: Props) {
             <ArrowLeft className="h-4 w-4" />
           </Button>
         }
-        rightSlot={<Badge tone="secondary">{project.phase}</Badge>}
+        rightSlot={
+          <div className="flex items-center gap-2">
+            <Button
+              ghost
+              onClick={onToggleEngine}
+              disabled={engineBusy}
+              title={
+                isClaudeCode
+                  ? "Chat runs on Claude Code — click to switch back to Hermes"
+                  : "Chat runs on Hermes — click to use Claude Code for this project"
+              }
+              className={cn(
+                "h-7 gap-1.5 px-2 text-xs",
+                isClaudeCode && "text-primary",
+              )}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {isClaudeCode ? "Claude Code" : "Hermes"}
+            </Button>
+            <Badge tone="secondary">{project.phase}</Badge>
+          </div>
+        }
       />
 
       <div className="flex min-h-0 flex-1 flex-col">
@@ -251,7 +292,7 @@ function ChatPanel({
     error,
     send,
     interrupt,
-  } = useChatStream(project.session_id ?? null, project.name);
+  } = useChatStream(project.session_id ?? null, project.name, project.engine ?? null);
   const kickoffSentRef = useRef(false);
 
   // Bubble devServers up to whichever pane wraps us (BuildingPane reads it
@@ -507,6 +548,10 @@ function DesignPane({
     { port: number; url: string }[]
   >([]);
   const [reloadKey, setReloadKey] = useState(0);
+  // Editable preview target (host:port). Empty = auto: the detected dev server,
+  // else the predefined localhost:5174. Lets the user point the panel at any
+  // localhost:xxxx their app runs on.
+  const [previewTarget, setPreviewTarget] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
 
@@ -532,11 +577,17 @@ function DesignPane({
 
   // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
   // unrelated localhost servers detected by the gateway don't hijack the
-  // iframe. Returns null when 5174 isn't running.
+  // iframe.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
+  // Preview target: the user's override (header input) wins; otherwise the
+  // detected dev server, else the predefined localhost:5174. previewSrc is
+  // always set so the panel stays open from the start of the phase.
+  const previewUrl = previewTarget.trim()
+    ? `http://${previewTarget.trim()}/`
+    : currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
-    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
-    [currentServer, reloadKey],
+    () => `${previewUrl}#${reloadKey}`,
+    [previewUrl, reloadKey],
   );
 
   // Resizable split — same wiring as BuildingPane. Shares SPLIT_STORAGE_KEY
@@ -709,9 +760,14 @@ function DesignPane({
                 Live preview
               </Typography>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                  {currentServer?.url}
-                </span>
+                <input
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  placeholder={currentServer?.url ?? `localhost:${VIBE_DEV_PORT}`}
+                  spellCheck={false}
+                  aria-label="Preview host:port"
+                  className="w-44 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground/90 focus:border-primary/50 focus:outline-none"
+                />
                 <Button
                   ghost
                   size="icon"
@@ -829,6 +885,10 @@ function BackendPane({
     { port: number; url: string }[]
   >([]);
   const [reloadKey, setReloadKey] = useState(0);
+  // Editable preview target (host:port). Empty = auto: the detected dev server,
+  // else the predefined localhost:5174. Lets the user point the panel at any
+  // localhost:xxxx their app runs on.
+  const [previewTarget, setPreviewTarget] = useState("");
   const [activeTab, setActiveTab] = useState<BackendTab>("database");
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
@@ -855,13 +915,17 @@ function BackendPane({
     };
   }, [project.name]);
 
-  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
-  // unrelated localhost servers detected by the gateway don't hijack the
-  // iframe. Returns null when 5174 isn't running.
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port. Preview
+  // target: the user's override (header input) wins; otherwise the detected dev
+  // server, else the predefined localhost:5174. previewSrc is always set so the
+  // panel stays open from the start of the phase.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
+  const previewUrl = previewTarget.trim()
+    ? `http://${previewTarget.trim()}/`
+    : currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
-    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
-    [currentServer, reloadKey],
+    () => `${previewUrl}#${reloadKey}`,
+    [previewUrl, reloadKey],
   );
 
   // Resizable split — same wiring as DesignPane / BuildingPane.
@@ -1061,9 +1125,14 @@ function BackendPane({
             </div>
             {activeTab === "preview" && previewSrc && (
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                  {currentServer?.url}
-                </span>
+                <input
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  placeholder={currentServer?.url ?? `localhost:${VIBE_DEV_PORT}`}
+                  spellCheck={false}
+                  aria-label="Preview host:port"
+                  className="w-44 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground/90 focus:border-primary/50 focus:outline-none"
+                />
                 <Button
                   ghost
                   size="icon"
@@ -1200,19 +1269,27 @@ function ImprovementPane({
   onRefresh: () => void;
 }) {
   const [reloadKey, setReloadKey] = useState(0);
+  // Editable preview target (host:port). Empty = auto: the detected dev server,
+  // else the predefined localhost:5174. Lets the user point the panel at any
+  // localhost:xxxx their app runs on.
+  const [previewTarget, setPreviewTarget] = useState("");
   const [devServers, setDevServers] = useState<
     { port: number; url: string }[]
   >([]);
   const [err, setErr] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState<"approve" | "reject" | null>(null);
 
-  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port so
-  // unrelated localhost servers detected by the gateway don't hijack the
-  // iframe. Returns null when 5174 isn't running.
+  // PR-005 — Vibe Code right pane is filtered to the fixed Vite port. Preview
+  // target: the user's override (header input) wins; otherwise the detected dev
+  // server, else the predefined localhost:5174. previewSrc is always set so the
+  // panel stays open from the start of the phase.
   const currentServer = pickDevServerForPort(devServers, VIBE_DEV_PORT);
+  const previewUrl = previewTarget.trim()
+    ? `http://${previewTarget.trim()}/`
+    : currentServer?.url ?? `http://localhost:${VIBE_DEV_PORT}/`;
   const previewSrc = useMemo(
-    () => (currentServer ? `${currentServer.url}#${reloadKey}` : null),
-    [currentServer, reloadKey],
+    () => `${previewUrl}#${reloadKey}`,
+    [previewUrl, reloadKey],
   );
 
   // Resizable split — same wiring as Design / Backend.
@@ -1382,9 +1459,14 @@ function ImprovementPane({
                 Live preview
               </Typography>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[0.65rem] text-muted-foreground/70">
-                  {currentServer?.url}
-                </span>
+                <input
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  placeholder={currentServer?.url ?? `localhost:${VIBE_DEV_PORT}`}
+                  spellCheck={false}
+                  aria-label="Preview host:port"
+                  className="w-44 rounded border border-border/60 bg-transparent px-1.5 py-0.5 font-mono text-[0.65rem] text-muted-foreground/90 focus:border-primary/50 focus:outline-none"
+                />
                 <Button
                   ghost
                   size="icon"

@@ -280,6 +280,120 @@ function DailyTable({ daily }: { daily: AnalyticsDailyEntry[] }) {
   );
 }
 
+function ModelTokenBarChart({ models }: { models: AnalyticsModelEntry[] }) {
+  const { t } = useI18n();
+  // Spec: only models that have had at least one API request are selectable.
+  const eligible = useMemo(
+    () => models.filter((m) => (m.api_calls ?? 0) >= 1),
+    [models],
+  );
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(eligible.map((m) => m.model)),
+  );
+  // Re-sync to "all selected" whenever the eligible set changes (period
+  // switch / refresh) so the chart never shows a stale or empty selection.
+  const eligibleKey = eligible.map((m) => m.model).join("|");
+  useEffect(() => {
+    setSelected(new Set(eligibleKey ? eligibleKey.split("|") : []));
+  }, [eligibleKey]);
+
+  if (eligible.length === 0) return null;
+
+  const toggle = (name: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  const shown = eligible.filter((m) => selected.has(m.model));
+  const maxTotal = Math.max(
+    ...shown.map((m) => m.input_tokens + m.output_tokens),
+    1,
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-muted-foreground" />
+          <CardTitle className="text-base">Token usage by model</CardTitle>
+        </div>
+        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-1.5">
+            <div className="h-2.5 w-2.5 bg-[#ffe6cb]" />
+            {t.analytics.input}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className="h-2.5 w-2.5 bg-emerald-500" />
+            {t.analytics.output}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {eligible.map((m) => {
+            const on = selected.has(m.model);
+            return (
+              <button
+                key={m.model}
+                type="button"
+                onClick={() => toggle(m.model)}
+                title={`${m.model} — ${m.api_calls} req`}
+                className={
+                  "rounded-full border px-2.5 py-0.5 text-[11px] transition-colors " +
+                  (on
+                    ? "border-primary/50 bg-primary/10 text-foreground"
+                    : "border-border/50 text-muted-foreground hover:text-foreground")
+                }
+              >
+                {m.model}
+              </button>
+            );
+          })}
+        </div>
+
+        {shown.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted-foreground">
+            Select a model to see its token usage.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {shown.map((m) => {
+              const inPct = Math.round((m.input_tokens / maxTotal) * 100);
+              const outPct = Math.round((m.output_tokens / maxTotal) * 100);
+              return (
+                <div key={m.model} className="flex items-center gap-2">
+                  <div
+                    className="w-32 shrink-0 truncate text-xs"
+                    title={m.model}
+                  >
+                    {m.model}
+                  </div>
+                  <div className="flex h-4 flex-1 overflow-hidden rounded-sm bg-background-base/40">
+                    <div
+                      className="h-full bg-[#ffe6cb]/80"
+                      style={{ width: `${inPct}%` }}
+                    />
+                    <div
+                      className="h-full bg-emerald-500/70"
+                      style={{ width: `${outPct}%` }}
+                    />
+                  </div>
+                  <div className="w-28 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
+                    {formatTokens(m.input_tokens)} / {formatTokens(m.output_tokens)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ModelTable({ models }: { models: AnalyticsModelEntry[] }) {
   const { t } = useI18n();
   const { sorted, sortKey, sortDir, toggle } = useTableSort(models, "input_tokens", "desc");
@@ -572,6 +686,7 @@ export default function AnalyticsPage() {
           </div>
 
           <DailyTable daily={data.daily} />
+          <ModelTokenBarChart models={data.by_model} />
           <ModelTable models={data.by_model} />
           <SkillTable skills={data.skills.top_skills} />
         </>

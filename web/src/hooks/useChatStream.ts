@@ -166,6 +166,12 @@ export function useChatStream(
    * which uses the env-driven default model.
    */
   vibeProject?: string | null,
+  /**
+   * Chat engine. "claude_code" routes this session's prompts to the Claude
+   * Code CLI (Surface A) instead of the in-process Hermes agent. Omit (or
+   * null) for the default Hermes path. Forwarded to session.create/resume.
+   */
+  engine?: string | null,
 ): UseChatStream {
   // One client per hook instance. useState's lazy initialiser gives a stable
   // value that's safe to read during render (and to return for the composer's
@@ -396,6 +402,7 @@ export function useChatStream(
             }>("session.resume", {
               session_id: resumeId,
               ...(vibeProject ? { vibe_project: vibeProject } : {}),
+              ...(engine ? { engine } : {}),
             })
             .then((res) => {
               if (cancelled || !res?.session_id) return;
@@ -411,7 +418,10 @@ export function useChatStream(
         return gw
           .request<{ session_id: string; session_key?: string }>(
             "session.create",
-            vibeProject ? { vibe_project: vibeProject } : {},
+            {
+              ...(vibeProject ? { vibe_project: vibeProject } : {}),
+              ...(engine ? { engine } : {}),
+            },
           )
           .then((created) => {
             if (cancelled || !created?.session_id) return;
@@ -441,7 +451,7 @@ export function useChatStream(
       offDevServer();
       gw.close();
     };
-  }, [gw, upsertAssistant, resumeId, vibeProject]);
+  }, [gw, upsertAssistant, resumeId, vibeProject, engine]);
 
   // Submit a turn to the agent (the non-slash path). Pushes the user bubble
   // and fires prompt.submit. Also used as the `send` callback for slash
